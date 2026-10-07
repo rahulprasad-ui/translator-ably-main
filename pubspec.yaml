@@ -1,0 +1,119 @@
+name: translator
+description: Multi Language Translator App develop by Harsh H. Rajpurohit (Google me)
+
+publish_to: 'none'
+
+# Version
+version: 1.0.5+5
+
+environment:
+  sdk: '>=3.2.3 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # iOS Icons  
+  cupertino_icons: ^1.0.6
+
+  # Firebase
+  firebase_core: ^4.15.0
+  firebase_auth: ^6.7.0
+
+  # Remote configuration of app
+  firebase_remote_config: ^6.7.0
+
+  # Sharing
+  share_plus: ^13.3.0
+
+  ### Below Packages are Required For Ads & Push Notification to Work Properly ###
+
+  # Integrating ads
+  google_mobile_ads: ^9.1.0
+
+  # Getx flutter
+  get: ^4.6.6
+
+  # For getting unique device id
+  flutter_udid: ^4.1.6
+  
+  # For Detecting Network connectivity change
+  internet_connection_checker: ^3.0.1
+
+  # Network requests
+  http: ^1.1.0
+
+  # For storing data (in local storage) 
+  hive: ^2.2.3
+  hive_flutter: ^1.1.0
+
+  # Foreground & Background
+  flutter_fgbg: ^0.8.0
+
+  # For animated loading
+  lottie: ^3.3.0
+  url_launcher: ^6.2.5
+
+  # Text to Speech (Word Pronouncer)
+  flutter_tts: ^4.2.5
+
+  # For voice translator
+  speech_to_text: ^7.5.0
+
+  # Text Translation
+  translator_plus:
+    path: ./translator_plus
+
+  # For Pdf to Text
+  read_pdf_text: ^0.3.1
+
+  file_picker: ^13.1.0
+
+  # Animations
+  flutter_animate: ^4.5.0
+
+  # Play audio
+  audioplayers: ^6.8.1
+
+  # In App Purchases
+  in_app_purchase: ^3.1.13
+  razorpay_flutter: ^1.4.0
+
+  # Native PDF rendering (PDFium on Android, CoreGraphics on iOS)
+  pdfx: ^2.6.0
+
+  # Temp file path management
+  path_provider: ^2.1.2
+  pdf_combiner: ^6.2.2
+  pdf_splitern: ^1.1.0
+
+  # Generate PDF documents (used by Compress PDF to rebuild with JPEG images)
+  pdf: ^3.11.0
+
+  # Image decoding/encoding (grayscale fallback for Compress PDF)
+  image: ^4.10.1
+  archive: ^4.3.0
+  google_mlkit_text_recognition: ^0.17.1
+  image_picker: ^1.2.3
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+  # Good Practices
+  flutter_lints: ^6.0.0
+
+  # change_app_package_name: ^1.1.0
+
+flutter:
+  # Enable material design
+  uses-material-design: true
+
+  # App assets
+  assets:
+    - assets/
+    - assets/flags/
+    - assets/images/
+    - assets/lottie/
+    - assets/icons/
+    - assets/sounds/

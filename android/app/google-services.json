@@ -1,0 +1,118 @@
+{
+  "project_info": {
+    "project_number": "892123850170",
+    "project_id": "ai-chat-bot-3",
+    "storage_bucket": "ai-chat-bot-3.appspot.com"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:892123850170:android:b6ed7e0b134fae86ac2983",
+        "android_client_info": {
+          "package_name": "com.ide.codeKit.translator"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "892123850170-j7fu1n0td0no0q37i0mi5656lq3v6uq3.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAuW9naLmLeaB_D2hc-fWIdQK0T98JWyw0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "892123850170-j7fu1n0td0no0q37i0mi5656lq3v6uq3.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "892123850170-1d05jchb8tnb4ggnrqu1ciolo3v9gcas.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.harshRajpurohit.chatGpt4"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:892123850170:android:62f342c4f311828cac2983",
+        "android_client_info": {
+          "package_name": "com.translator.voicetotext.dictionarywordgame.pdfimage"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "892123850170-j7fu1n0td0no0q37i0mi5656lq3v6uq3.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAuW9naLmLeaB_D2hc-fWIdQK0T98JWyw0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "892123850170-j7fu1n0td0no0q37i0mi5656lq3v6uq3.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "892123850170-1d05jchb8tnb4ggnrqu1ciolo3v9gcas.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.harshRajpurohit.chatGpt4"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:892123850170:android:0fcff10d29ab0604ac2983",
+        "android_client_info": {
+          "package_name": "dev.flutterexplained.webrtc_tutorial"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "892123850170-j7fu1n0td0no0q37i0mi5656lq3v6uq3.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAuW9naLmLeaB_D2hc-fWIdQK0T98JWyw0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "892123850170-j7fu1n0td0no0q37i0mi5656lq3v6uq3.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "892123850170-1d05jchb8tnb4ggnrqu1ciolo3v9gcas.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.harshRajpurohit.chatGpt4"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
