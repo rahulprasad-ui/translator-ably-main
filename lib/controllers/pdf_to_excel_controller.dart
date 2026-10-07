@@ -13,6 +13,7 @@ import 'package:pdfx/pdfx.dart';
 import 'package:read_pdf_text/read_pdf_text.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../ads/ad_helper.dart';
 import '../helper/my_dialogs.dart';
 
 enum ExcelWorkbookLayout {
@@ -421,6 +422,7 @@ class PdfToExcelController extends GetxController {
       MyDialogs.success(
         msg: 'Converted to Excel (.xlsx) successfully! ($totalRows rows extracted)',
       );
+      AdHelper.showInterstitialAd(onComplete: () {});
     } catch (e, stack) {
       log('[PdfToExcel] convert error: $e\n$stack');
       MyDialogs.info(msg: 'Conversion failed: $e');

@@ -13,6 +13,7 @@ import 'package:pdfx/pdfx.dart';
 import 'package:read_pdf_text/read_pdf_text.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../ads/ad_helper.dart';
 import '../helper/my_dialogs.dart';
 
 enum EpubFontTheme {
@@ -286,6 +287,7 @@ class PdfToEpubController extends GetxController {
       totalChapters.value = count;
 
       MyDialogs.success(msg: 'E-Book created! Ready for Kindle, Apple Books & e-readers.');
+      AdHelper.showInterstitialAd(onComplete: () {});
     } catch (e, stack) {
       log('[PdfToEpub] convert error: $e\n$stack');
       MyDialogs.info(msg: 'Conversion failed: $e');

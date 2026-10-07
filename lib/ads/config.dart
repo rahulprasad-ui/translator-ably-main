@@ -28,7 +28,6 @@ class Config {
         "app_open_ad": "ca-app-pub-3940256099942544/9257395921",
         "banner_ad": "ca-app-pub-3940256099942544/6300978111",
         "show_ads": "true",
-        "interstitial_interval_minutes": 10
       };
 
   static Future<void> initConfig() async {
@@ -71,10 +70,6 @@ class Config {
     return ad.isNotEmpty ? ad : prodInterstitialAd;
   }
   static String get appOpenAd => _rc.getString('app_open_ad');
-  static int get interstitialIntervalMinutes {
-    final min = _rc.getInt('interstitial_interval_minutes');
-    return min > 0 ? min : 10;
-  }
 
   // Test mode me remote config ka show_ads flag bypass karo, warna testing
   // ke time remote config se false aane par koi bhi ad load nahi hota.

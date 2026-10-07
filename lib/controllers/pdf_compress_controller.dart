@@ -13,6 +13,8 @@ import 'package:path_provider/path_provider.dart';
 import 'package:pdfx/pdfx.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../ads/ad_helper.dart';
+
 // ── Isolate helper ─────────────────────────────────────────────────────────────
 // Top-level so compute() can spawn it in a separate isolate.
 // Converts JPEG bytes to grayscale without touching the UI thread.
@@ -392,6 +394,7 @@ class PdfCompressController extends GetxController {
           originalSize: originalSize,
           compressedSize: bestSize,
         );
+        AdHelper.showInterstitialAd(onComplete: () {});
         return;
       }
 
@@ -411,6 +414,7 @@ class PdfCompressController extends GetxController {
       );
       compressProgress.value = 1.0;
       progressLabel.value = 'Done!';
+      AdHelper.showInterstitialAd(onComplete: () {});
     } catch (e) {
       log('[PdfCompress] executeCompress error: $e');
       Get.snackbar(

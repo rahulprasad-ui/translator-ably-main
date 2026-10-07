@@ -11,6 +11,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:pdfx/pdfx.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../ads/ad_helper.dart';
 import '../helper/my_dialogs.dart';
 
 enum JpgPageSelectionMode {
@@ -409,6 +410,7 @@ class PdfToJpgController extends GetxController {
         MyDialogs.success(
           msg: '${convertedImages.length} page(s) converted to JPG successfully!',
         );
+        AdHelper.showInterstitialAd(onComplete: () {});
       }
     } catch (e, stack) {
       log('[PdfToJpg] conversion error: $e\n$stack');

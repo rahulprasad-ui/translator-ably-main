@@ -12,6 +12,7 @@ import 'package:pdf_combiner/models/pdf_from_multiple_image_config.dart';
 import 'package:pdf_combiner/pdf_combiner.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../ads/ad_helper.dart';
 import '../screen/pdf_editor_screen.dart';
 
 enum MergeImagesFormat {
@@ -182,6 +183,7 @@ class MergeImagesController extends GetxController {
         if (await outFile.exists()) {
           mergedFilePath.value = result;
           mergedFileSize.value = await outFile.length();
+          AdHelper.showInterstitialAd(onComplete: () {});
           return result;
         } else {
           throw Exception('Merged PDF file was not created');
@@ -199,6 +201,7 @@ class MergeImagesController extends GetxController {
         if (await outFile.exists()) {
           mergedFilePath.value = result;
           mergedFileSize.value = await outFile.length();
+          AdHelper.showInterstitialAd(onComplete: () {});
           return result;
         } else {
           throw Exception('Stitched image was not created');

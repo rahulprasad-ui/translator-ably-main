@@ -15,6 +15,7 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:pdfx/pdfx.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../ads/ad_helper.dart';
 import '../helper/my_dialogs.dart';
 
 // ── Models & Enums ──────────────────────────────────────────────────────────
@@ -724,6 +725,7 @@ class ExcelToPdfController extends GetxController {
       conversionProgress.value = 1.0;
       statusMessage.value = 'Spreadsheet Converted!';
       MyDialogs.success(msg: 'Excel spreadsheet converted to PDF successfully!');
+      AdHelper.showInterstitialAd(onComplete: () {});
       return outputPath;
     } catch (e) {
       log('[ExcelToPdf] convertToPdf error: $e');

@@ -13,6 +13,7 @@ import 'package:pdfx/pdfx.dart';
 import 'package:read_pdf_text/read_pdf_text.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../ads/ad_helper.dart';
 import '../helper/my_dialogs.dart';
 
 enum HtmlExportFormat {
@@ -425,6 +426,7 @@ class PdfToHtmlController extends GetxController {
       MyDialogs.success(
         msg: 'HTML5 webpage generated successfully! (${pages.length} pages converted)',
       );
+      AdHelper.showInterstitialAd(onComplete: () {});
     } catch (e, stack) {
       log('[PdfToHtml] convert error: $e\n$stack');
       MyDialogs.info(msg: 'Conversion failed: $e');

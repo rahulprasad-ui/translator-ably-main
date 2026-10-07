@@ -15,6 +15,7 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:pdfx/pdfx.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../ads/ad_helper.dart';
 import '../helper/my_dialogs.dart';
 
 // ── Models & Enums ──────────────────────────────────────────────────────────
@@ -403,6 +404,7 @@ class JpgToPdfController extends GetxController {
       conversionProgress.value = 1.0;
       statusMessage.value = 'Done!';
       MyDialogs.success(msg: 'JPG to PDF converted successfully!');
+      AdHelper.showInterstitialAd(onComplete: () {});
       return outputPath;
     } catch (e) {
       log('[JpgToPdf] convertToPdf error: $e');

@@ -15,6 +15,7 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:pdfx/pdfx.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../ads/ad_helper.dart';
 import '../helper/my_dialogs.dart';
 
 enum UnlockStatus {
@@ -343,6 +344,7 @@ class PdfUnlockController extends GetxController {
       unlockStatus.value = UnlockStatus.unlockedSuccess;
       exportProgress.value = 1.0;
       exportStatus.value = 'PDF successfully unlocked and password removed!';
+      AdHelper.showInterstitialAd(onComplete: () {});
       return outPath;
     } catch (e) {
       log('[PdfUnlock] removePasswordAndExport error: $e');

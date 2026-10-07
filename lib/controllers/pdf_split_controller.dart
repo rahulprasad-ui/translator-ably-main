@@ -15,6 +15,7 @@ import 'package:pdf_splitern/pdf_splitern.dart';
 import 'package:pdfx/pdfx.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../ads/ad_helper.dart';
 import '../screen/pdf_editor_screen.dart';
 
 enum SplitMode {
@@ -467,6 +468,7 @@ class PdfSplitController extends GetxController {
 
       splitProgress.value = 1.0;
       generatedFiles.assignAll(results);
+      AdHelper.showInterstitialAd(onComplete: () {});
       return results;
     } catch (e) {
       log('[PdfSplit] executeSplit error: $e');

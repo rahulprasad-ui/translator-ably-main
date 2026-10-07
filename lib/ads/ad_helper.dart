@@ -68,23 +68,10 @@ class AdHelper {
     _isLoadingInterstitial = false;
   }
 
-  /// Starts the recurring 10-minute timer for Interstitial Ads
-  static void startPeriodicInterstitial() {
-    _periodicInterstitialTimer?.cancel();
+  // Cooldown between full-screen interstitial ads to prevent spamming
+  static const int _minCooldownSeconds = 40;
 
-    // Preload an interstitial ad immediately so it is ready
-    preloadInterstitialAd();
-
-    final interval = Duration(minutes: Config.interstitialIntervalMinutes);
-    log('Starting periodic interstitial ad timer (interval: ${Config.interstitialIntervalMinutes} minutes)');
-
-    _periodicInterstitialTimer = Timer.periodic(interval, (_) {
-      log('10-minute periodic interstitial ad triggered');
-      showPeriodicInterstitialAd();
-    });
-  }
-
-  /// Preloads an Interstitial Ad in background
+  /// Preloads an Interstitial Ad in the background so it is ready instantly
   static void preloadInterstitialAd() {
     if (Config.hideAds || _interstitialAdLoaded || _isLoadingInterstitial) return;
 
@@ -109,64 +96,32 @@ class AdHelper {
     );
   }
 
-  /// Displays the recurring interstitial ad (called every 10 minutes)
-  static void showPeriodicInterstitialAd() {
-    if (Config.hideAds) return;
-
-    if (_interstitialAdLoaded && _interstitialAd != null) {
-      _interstitialAd!.fullScreenContentCallback =
-          FullScreenContentCallback(onAdDismissedFullScreenContent: (ad) {
-        log('Periodic Interstitial Ad dismissed');
-        _lastInterstitialShownTime = DateTime.now();
-        _resetInterstitialAd();
-        preloadInterstitialAd();
-      }, onAdFailedToShowFullScreenContent: (ad, error) {
-        log('Periodic Interstitial Ad failed to show: $error');
-        _resetInterstitialAd();
-        preloadInterstitialAd();
-      });
-
-      _interstitialAd!.show();
-      _lastInterstitialShownTime = DateTime.now();
-      return;
-    }
-
-    // If not preloaded yet, load and show
-    InterstitialAd.load(
-      adUnitId: Config.interstitialAd,
-      request: const AdRequest(),
-      adLoadCallback: InterstitialAdLoadCallback(
-        onAdLoaded: (ad) {
-          ad.fullScreenContentCallback =
-              FullScreenContentCallback(onAdDismissedFullScreenContent: (ad) {
-            log('Periodic Interstitial Ad dismissed');
-            _lastInterstitialShownTime = DateTime.now();
-            _resetInterstitialAd();
-            preloadInterstitialAd();
-          }, onAdFailedToShowFullScreenContent: (ad, error) {
-            log('Periodic Interstitial Ad failed to show: $error');
-            _resetInterstitialAd();
-            preloadInterstitialAd();
-          });
-
-          ad.show();
-          _lastInterstitialShownTime = DateTime.now();
-        },
-        onAdFailedToLoad: (err) {
-          log('Failed to load periodic interstitial ad: ${err.message}');
-          _resetInterstitialAd();
-        },
-      ),
-    );
+  /// Safe backward-compatible method: preloads ad instead of intrusive timer
+  static void startPeriodicInterstitial() {
+    _periodicInterstitialTimer?.cancel();
+    preloadInterstitialAd();
   }
 
-  /// Shows an interstitial ad with callback upon completion
-  static void showInterstitialAd({required VoidCallback onComplete}) {
+  /// Shows an interstitial ad with callback upon completion (with policy cooldown protection)
+  static void showInterstitialAd({
+    required VoidCallback onComplete,
+    bool ignoreCooldown = false,
+  }) {
     log('Interstitial Ad Id: ${Config.interstitialAd}');
 
     if (Config.hideAds) {
       onComplete();
       return;
+    }
+
+    // Cooldown protection to prevent violating AdMob Frequency / Interruption policies
+    if (!ignoreCooldown && _lastInterstitialShownTime != null) {
+      final elapsed = DateTime.now().difference(_lastInterstitialShownTime!).inSeconds;
+      if (elapsed < _minCooldownSeconds) {
+        log('Interstitial Ad skipped due to cooldown ($elapsed / $_minCooldownSeconds s)');
+        onComplete();
+        return;
+      }
     }
 
     if (_interstitialAdLoaded && _interstitialAd != null) {

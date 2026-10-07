@@ -15,6 +15,7 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:pdfx/pdfx.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../ads/ad_helper.dart';
 import '../helper/my_dialogs.dart';
 
 // ── Watermark Erase Region Model ────────────────────────────────────────────
@@ -628,6 +629,7 @@ class PdfRemoveWatermarkController extends GetxController {
 
       exportProgress.value = 1.0;
       exportStatus.value = 'Watermarks successfully removed!';
+      AdHelper.showInterstitialAd(onComplete: () {});
       return outPath;
     } catch (e) {
       log('[PdfRemoveWatermark] exportWatermarkFreePdf error: $e');

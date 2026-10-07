@@ -15,6 +15,7 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:pdfx/pdfx.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../ads/ad_helper.dart';
 import '../helper/my_dialogs.dart';
 
 // ── Models & Enums ──────────────────────────────────────────────────────────
@@ -405,6 +406,7 @@ class PngToPdfController extends GetxController {
       conversionProgress.value = 1.0;
       statusMessage.value = 'Done!';
       MyDialogs.success(msg: 'PNG to PDF converted successfully!');
+      AdHelper.showInterstitialAd(onComplete: () {});
       return outputPath;
     } catch (e) {
       log('[PngToPdf] convertToPdf error: $e');

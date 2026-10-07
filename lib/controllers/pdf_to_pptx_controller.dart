@@ -13,6 +13,7 @@ import 'package:pdfx/pdfx.dart';
 import 'package:read_pdf_text/read_pdf_text.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../ads/ad_helper.dart';
 import '../helper/my_dialogs.dart';
 
 enum PptxAspectRatio {
@@ -412,6 +413,7 @@ class PdfToPptxController extends GetxController {
       MyDialogs.success(
         msg: '${pages.length} slide(s) converted to PowerPoint (.pptx) successfully!',
       );
+      AdHelper.showInterstitialAd(onComplete: () {});
     } catch (e, stack) {
       log('[PdfToPptx] convert error: $e\n$stack');
       MyDialogs.info(msg: 'Conversion failed: $e');

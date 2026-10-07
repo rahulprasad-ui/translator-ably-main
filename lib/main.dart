@@ -24,7 +24,7 @@ Future<void> main() async {
 
   // for initializing ads sdk
   await MobileAds.instance.initialize();
-  AdHelper.startPeriodicInterstitial();
+  AdHelper.preloadInterstitialAd();
 
   //init in-app purchases
   IAP.initialize(showDialogs: false);

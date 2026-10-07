@@ -15,6 +15,7 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:pdfx/pdfx.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../ads/ad_helper.dart';
 import '../helper/my_dialogs.dart';
 
 // ── Model for Placed Signatures & Stamps on PDF ─────────────────────────────
@@ -510,6 +511,7 @@ class PdfSignController extends GetxController {
 
       exportProgress.value = 1.0;
       exportStatus.value = 'Signatures successfully baked!';
+      AdHelper.showInterstitialAd(onComplete: () {});
       return outPath;
     } catch (e) {
       log('[PdfSign] exportSignedPdf error: $e');

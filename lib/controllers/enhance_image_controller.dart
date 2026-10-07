@@ -12,6 +12,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../ads/ad_helper.dart';
 import '../helper/my_dialogs.dart';
 
 // ── Enhancement Presets ───────────────────────────────────────────────────────
@@ -495,6 +496,7 @@ class EnhanceImageController extends GetxController {
       await outFile.writeAsBytes(fullProcessedBytes);
 
       enhancedImagePath.value = outPath;
+      AdHelper.showInterstitialAd(onComplete: () {});
 
       await Share.shareXFiles(
         [XFile(outPath, mimeType: 'image/jpeg')],

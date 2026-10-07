@@ -15,6 +15,7 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:pdfx/pdfx.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../ads/ad_helper.dart';
 import '../helper/my_dialogs.dart';
 
 // ── Form Element Types ────────────────────────────────────────────────────────
@@ -830,6 +831,7 @@ class PdfFillController extends GetxController {
       exportedPdfPath.value = outPath;
       exportProgress.value = 1.0;
       exportStatus.value = 'Complete!';
+      AdHelper.showInterstitialAd(onComplete: () {});
 
       return outPath;
     } catch (e) {

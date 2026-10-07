@@ -13,6 +13,7 @@ import 'package:pdf/pdf.dart' as pw_pdf;
 import 'package:pdf/widgets.dart' as pw;
 import 'package:share_plus/share_plus.dart';
 
+import '../ads/ad_helper.dart';
 import '../helper/my_dialogs.dart';
 
 enum QrDataType {
@@ -300,6 +301,7 @@ class QrGeneratorController extends GetxController {
 
       _addToRecent();
       MyDialogs.success(msg: 'QR Code image generated successfully!');
+      AdHelper.showInterstitialAd(onComplete: () {});
       return file.path;
     } catch (e) {
       log('[QrGenerator] saveQrImage error: $e');
@@ -419,6 +421,7 @@ class QrGeneratorController extends GetxController {
 
       _addToRecent();
       MyDialogs.success(msg: 'Printable PDF ready!');
+      AdHelper.showInterstitialAd(onComplete: () {});
       return outPath;
     } catch (e) {
       log('[QrGenerator] exportPrintablePdf error: $e');

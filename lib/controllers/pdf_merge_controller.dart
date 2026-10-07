@@ -11,6 +11,7 @@ import 'package:pdf_combiner/pdf_combiner.dart';
 import 'package:pdfx/pdfx.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../ads/ad_helper.dart';
 import '../screen/pdf_editor_screen.dart';
 
 class PdfMergeItem {
@@ -160,6 +161,7 @@ class PdfMergeController extends GetxController {
 
       mergedFilePath.value = result;
       log('[PdfMerge] Successfully merged to: $result');
+      AdHelper.showInterstitialAd(onComplete: () {});
       return result;
     } catch (e, stack) {
       log('[PdfMerge] merge error: $e', stackTrace: stack);

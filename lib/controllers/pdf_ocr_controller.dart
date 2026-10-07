@@ -21,6 +21,7 @@ import 'package:pdfx/pdfx.dart';
 import 'package:read_pdf_text/read_pdf_text.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../ads/ad_helper.dart';
 import '../helper/my_dialogs.dart';
 import '../model/home.dart';
 import '../helper/pref.dart';
@@ -711,6 +712,7 @@ class PdfOcrController extends GetxController {
         statusMessage.value = 'Image OCR Completed';
         currentStep.value = 'All images recognized successfully';
         MyDialogs.success(msg: 'Image OCR done! Extracted $totalWords words.');
+        AdHelper.showInterstitialAd(onComplete: () {});
       }
     } catch (e) {
       log('[ImageOcr] error: $e');
@@ -922,6 +924,7 @@ class PdfOcrController extends GetxController {
         statusMessage.value = 'OCR Completed Successfully';
         currentStep.value = 'All pages successfully processed';
         MyDialogs.success(msg: 'OCR completed! Extracted $totalWords words.');
+        AdHelper.showInterstitialAd(onComplete: () {});
       }
     } catch (e) {
       log('[PdfOcr] OCR error: $e');
@@ -1067,6 +1070,7 @@ class PdfOcrController extends GetxController {
         text: 'OCR Extracted Text: $baseName',
       );
       MyDialogs.success(msg: 'TXT file created!');
+      AdHelper.showInterstitialAd(onComplete: () {});
     } catch (e) {
       MyDialogs.info(msg: 'Export TXT failed: $e');
     }
@@ -1151,6 +1155,7 @@ class PdfOcrController extends GetxController {
         text: 'OCR PDF Document: $baseName',
       );
       MyDialogs.success(msg: 'PDF document generated!');
+      AdHelper.showInterstitialAd(onComplete: () {});
     } catch (e) {
       MyDialogs.info(msg: 'Export PDF failed: $e');
     }
@@ -1240,6 +1245,7 @@ class PdfOcrController extends GetxController {
         text: 'OCR Word Document: $baseName',
       );
       MyDialogs.success(msg: 'Word (.docx) document created!');
+      AdHelper.showInterstitialAd(onComplete: () {});
     } catch (e) {
       MyDialogs.info(msg: 'Export DOCX failed: $e');
     }

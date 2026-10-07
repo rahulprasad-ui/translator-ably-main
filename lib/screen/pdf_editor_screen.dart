@@ -25,6 +25,8 @@ import 'package:get/get.dart';
 import 'package:pdfx/pdfx.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../ads/ad_helper.dart';
+
 import '../controllers/pdf_editor_controller.dart';
 import '../helper/global.dart';
 
@@ -747,6 +749,7 @@ class _PdfEditorScreenState extends State<PdfEditorScreen>
         borderRadius: 14,
         duration: const Duration(seconds: 4),
       );
+      AdHelper.showInterstitialAd(onComplete: () {});
     } else {
       Get.snackbar(
         'Export Failed',

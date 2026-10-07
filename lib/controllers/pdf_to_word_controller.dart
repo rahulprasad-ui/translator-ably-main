@@ -12,6 +12,8 @@ import 'package:pdfx/pdfx.dart';
 import 'package:read_pdf_text/read_pdf_text.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../ads/ad_helper.dart';
+
 enum _BlockType { heading, bullet, tabular, body }
 
 class _ParsedBlock {
@@ -200,6 +202,7 @@ class PdfToWordController extends GetxController {
 
       convertedFilePath.value = outputPath;
       convertedFileSize.value = await outFile.length();
+      AdHelper.showInterstitialAd(onComplete: () {});
 
       return outputPath;
     } catch (e) {

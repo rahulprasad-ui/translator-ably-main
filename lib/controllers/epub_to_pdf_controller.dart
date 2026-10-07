@@ -15,6 +15,7 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:pdfx/pdfx.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../ads/ad_helper.dart';
 import '../helper/my_dialogs.dart';
 
 // ── Models & Enums ──────────────────────────────────────────────────────────
@@ -825,6 +826,7 @@ class EpubToPdfController extends GetxController {
       conversionProgress.value = 1.0;
       statusMessage.value = 'Book Converted!';
       MyDialogs.success(msg: 'EPUB converted to PDF successfully!');
+      AdHelper.showInterstitialAd(onComplete: () {});
       return outputPath;
     } catch (e) {
       log('[EpubToPdf] convertToPdf error: $e');

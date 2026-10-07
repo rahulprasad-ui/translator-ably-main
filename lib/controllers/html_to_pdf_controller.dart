@@ -15,6 +15,7 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:pdfx/pdfx.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../ads/ad_helper.dart';
 import '../helper/my_dialogs.dart';
 
 // ── Models & Enums ──────────────────────────────────────────────────────────
@@ -990,6 +991,7 @@ class HtmlToPdfController extends GetxController {
       conversionProgress.value = 1.0;
       conversionStatusText.value = 'Done!';
       MyDialogs.success(msg: 'HTML converted to PDF successfully!');
+      AdHelper.showInterstitialAd(onComplete: () {});
     } catch (e) {
       log('[HtmlToPdf] convertToPdf error: $e');
       MyDialogs.error(msg: 'Conversion failed: $e');
