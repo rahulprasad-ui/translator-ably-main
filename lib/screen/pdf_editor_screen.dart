@@ -1908,9 +1908,8 @@ class _PdfEditorScreenState extends State<PdfEditorScreen>
                     }
                   },
                   onTapDetectedText: (pageIdx, detectedElem, pageSize) {
-                    _showTextEditDialog(
+                    c.selectOrStartEditingText(
                       pageIndex: pageIdx,
-                      initialText: detectedElem.text,
                       detectedElement: detectedElem,
                       pageSize: pageSize,
                     );
@@ -2567,6 +2566,23 @@ class _InteractivePageOverlayLayerState
   List<Offset> _liveStrokes = [];
 
   @override
+  void initState() {
+    super.initState();
+    if (widget.controller.editorMode.value == EditorMode.edit) {
+      widget.controller.detectTextOnPage(widget.pageIndex);
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant _InteractivePageOverlayLayer oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.controller.editorMode.value == EditorMode.edit &&
+        !widget.controller.detectedPageTexts.containsKey(widget.pageIndex)) {
+      widget.controller.detectTextOnPage(widget.pageIndex);
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Obx(() {
       final isEditMode = widget.controller.editorMode.value == EditorMode.edit;
@@ -2632,6 +2648,9 @@ class _InteractivePageOverlayLayerState
             // 2. Visual outline hints & direct tap handlers for detected original PDF words in Edit Mode
             if (isEditMode && !widget.isDrawing) ...[
               ...((widget.controller.detectedPageTexts[widget.pageIndex] ?? const [])
+                  .where((elem) => !overlays.any((o) =>
+                      o.id == elem.id ||
+                      o.originalDetectedElement?.id == elem.id))
                   .map((elem) {
                 final r = elem.getScaledRect(pageSize);
                 return Positioned(
@@ -2648,10 +2667,10 @@ class _InteractivePageOverlayLayerState
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(3),
                         border: Border.all(
-                          color: const Color(0xFF3B82F6).withValues(alpha: 0.6),
-                          width: 1.2,
+                          color: const Color(0xFF3B82F6).withValues(alpha: 0.35),
+                          width: 1.0,
                         ),
-                        color: const Color(0xFF3B82F6).withValues(alpha: 0.12),
+                        color: const Color(0xFF3B82F6).withValues(alpha: 0.05),
                       ),
                     ),
                   ),
@@ -2746,12 +2765,22 @@ class _MovableOverlayWidget extends StatefulWidget {
 class _MovableOverlayWidgetState extends State<_MovableOverlayWidget> {
   late Offset _pos;
   late Size _size;
+  late TextEditingController _textCtrl;
+  late FocusNode _focusNode;
 
   @override
   void initState() {
     super.initState();
     _pos = widget.overlay.position;
     _size = widget.overlay.size;
+    _textCtrl = TextEditingController(text: widget.overlay.text ?? '');
+    _focusNode = FocusNode();
+
+    if (widget.isSelected && widget.isEditMode && widget.overlay.type == OverlayType.text) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _focusNode.requestFocus();
+      });
+    }
   }
 
   @override
@@ -2763,6 +2792,21 @@ class _MovableOverlayWidgetState extends State<_MovableOverlayWidget> {
     if (oldWidget.overlay.size != widget.overlay.size) {
       _size = widget.overlay.size;
     }
+    if (oldWidget.overlay.text != widget.overlay.text && _textCtrl.text != widget.overlay.text) {
+      _textCtrl.text = widget.overlay.text ?? '';
+    }
+    if (!oldWidget.isSelected && widget.isSelected && widget.isEditMode && widget.overlay.type == OverlayType.text) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _focusNode.requestFocus();
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _textCtrl.dispose();
+    _focusNode.dispose();
+    super.dispose();
   }
 
   @override
@@ -2788,21 +2832,21 @@ class _MovableOverlayWidgetState extends State<_MovableOverlayWidget> {
         child: Stack(
           clipBehavior: Clip.none,
           children: [
-            // Overlay Content Container
+            // Overlay Content Container with Red Selection Bounding Box
             Container(
               width: _size.width,
               constraints: BoxConstraints(minHeight: _size.height),
-              padding: const EdgeInsets.all(6),
+              padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 1),
               decoration: BoxDecoration(
-                // When selected: crisp red border as in video frame_020 and frame_040
+                // When selected: precise Adobe Acrobat red rectangular bounding box
                 border: widget.isSelected
-                    ? Border.all(color: const Color(0xFFEF4444), width: 1.6)
+                    ? Border.all(color: const Color(0xFFEF4444), width: 1.8)
                     : (widget.isEditMode
-                        ? Border.all(color: Colors.blue.withOpacity(0.3), width: 1)
+                        ? Border.all(color: Colors.blue.withValues(alpha: 0.25), width: 0.8)
                         : null),
-                borderRadius: BorderRadius.circular(4),
+                borderRadius: BorderRadius.circular(2),
                 color: widget.isSelected
-                    ? const Color(0xFFEF4444).withOpacity(0.04)
+                    ? const Color(0xFFEF4444).withValues(alpha: 0.02)
                     : Colors.transparent,
               ),
               child: _buildContent(),
@@ -3093,8 +3137,65 @@ class _MovableOverlayWidgetState extends State<_MovableOverlayWidget> {
       final isWhiteout = widget.overlay.backgroundColor != null &&
           widget.overlay.backgroundColor != Colors.transparent;
 
+      final textStyle = TextStyle(
+        color: widget.overlay.color,
+        fontSize: widget.overlay.fontSize,
+        fontWeight: widget.overlay.isBold ? FontWeight.bold : FontWeight.w500,
+        fontStyle: widget.overlay.isItalic ? FontStyle.italic : FontStyle.normal,
+        decoration: widget.overlay.isUnderline
+            ? TextDecoration.underline
+            : TextDecoration.none,
+        fontFamily: widget.overlay.fontFamily,
+      );
+
+      // In-place inline TextField directly over the PDF text when selected
+      if (widget.isSelected && widget.isEditMode) {
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 1),
+          decoration: BoxDecoration(
+            color: widget.overlay.backgroundColor ?? Colors.white,
+            borderRadius: BorderRadius.circular(2),
+          ),
+          child: IntrinsicWidth(
+            child: TextField(
+              controller: _textCtrl,
+              focusNode: _focusNode,
+              style: textStyle,
+              textAlign: widget.overlay.textAlign,
+              maxLines: null,
+              cursorColor: const Color(0xFFEF4444),
+              cursorWidth: 2.0,
+              decoration: const InputDecoration(
+                isDense: true,
+                contentPadding: EdgeInsets.zero,
+                border: InputBorder.none,
+                focusedBorder: InputBorder.none,
+                enabledBorder: InputBorder.none,
+                errorBorder: InputBorder.none,
+                disabledBorder: InputBorder.none,
+              ),
+              onChanged: (newText) {
+                widget.overlay.text = newText;
+                final tp = TextPainter(
+                  text: TextSpan(text: newText, style: textStyle),
+                  textDirection: TextDirection.ltr,
+                )..layout();
+                final neededWidth = math.max(_size.width, tp.width + 12.0);
+                if (neededWidth > _size.width) {
+                  setState(() {
+                    _size = Size(neededWidth, _size.height);
+                  });
+                  widget.onUpdateSize(_size);
+                }
+                Get.find<PdfEditorController>().overlays.refresh();
+              },
+            ),
+          ),
+        );
+      }
+
       return Container(
-        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+        padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 1),
         decoration: BoxDecoration(
           color: widget.overlay.backgroundColor ?? Colors.transparent,
           borderRadius: isWhiteout ? BorderRadius.circular(2) : null,
@@ -3102,19 +3203,7 @@ class _MovableOverlayWidgetState extends State<_MovableOverlayWidget> {
         child: Text(
           widget.overlay.text ?? '',
           textAlign: widget.overlay.textAlign,
-          style: TextStyle(
-            color: widget.overlay.color,
-            fontSize: widget.overlay.fontSize,
-            fontWeight: widget.overlay.isBold ? FontWeight.bold : FontWeight.w500,
-            fontStyle: widget.overlay.isItalic ? FontStyle.italic : FontStyle.normal,
-            decoration: widget.overlay.isUnderline
-                ? TextDecoration.underline
-                : TextDecoration.none,
-            fontFamily: widget.overlay.fontFamily,
-            shadows: isWhiteout
-                ? null
-                : const [Shadow(color: Colors.white70, blurRadius: 2)],
-          ),
+          style: textStyle,
         ),
       );
     } else if (widget.overlay.type == OverlayType.image &&

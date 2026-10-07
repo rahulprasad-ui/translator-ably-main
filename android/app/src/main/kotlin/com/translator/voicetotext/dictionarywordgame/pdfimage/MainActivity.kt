@@ -16,9 +16,50 @@ import io.flutter.plugin.common.MethodChannel
 
 class MainActivity: FlutterActivity() {
     private val CHANNEL = "com.translator/storage_channel"
+    private val PDF_ENGINE_CHANNEL = "com.translator/pdf_text_engine"
+    private var pdfTextEngine: PdfTextEngine? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+
+        if (pdfTextEngine == null) {
+            pdfTextEngine = PdfTextEngine(applicationContext)
+        }
+
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, PDF_ENGINE_CHANNEL).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "extractTextElements" -> {
+                    val pdfPath = call.argument<String>("pdfPath")
+                    val pageIndex = call.argument<Int>("pageIndex") ?: 0
+                    if (pdfPath == null) {
+                        result.error("INVALID_ARGS", "pdfPath is required", null)
+                        return@setMethodCallHandler
+                    }
+                    try {
+                        val elements = pdfTextEngine?.extractTextElements(pdfPath, pageIndex) ?: emptyList()
+                        result.success(elements)
+                    } catch (e: Exception) {
+                        result.error("EXTRACTION_ERROR", e.message, null)
+                    }
+                }
+                "saveModifiedPdf" -> {
+                    val sourcePath = call.argument<String>("sourcePath")
+                    val outPath = call.argument<String>("outPath")
+                    val modifications = call.argument<List<Map<String, Any>>>("modifications") ?: emptyList()
+                    if (sourcePath == null || outPath == null) {
+                        result.error("INVALID_ARGS", "sourcePath and outPath are required", null)
+                        return@setMethodCallHandler
+                    }
+                    try {
+                        val success = pdfTextEngine?.saveModifiedPdf(sourcePath, outPath, modifications) ?: false
+                        result.success(success)
+                    } catch (e: Exception) {
+                        result.error("SAVE_ERROR", e.message, null)
+                    }
+                }
+                else -> result.notImplemented()
+            }
+        }
 
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
             when (call.method) {

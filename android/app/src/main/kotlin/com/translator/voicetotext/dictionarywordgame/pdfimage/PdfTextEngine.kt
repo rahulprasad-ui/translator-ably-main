@@ -1,0 +1,323 @@
+package com.translator.voicetotext.dictionarywordgame.pdfimage
+
+import android.content.Context
+import android.graphics.Color
+import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
+import com.tom_roush.pdfbox.pdmodel.PDDocument
+import com.tom_roush.pdfbox.pdmodel.PDPage
+import com.tom_roush.pdfbox.pdmodel.PDPageContentStream
+import com.tom_roush.pdfbox.pdmodel.common.PDRectangle
+import com.tom_roush.pdfbox.pdmodel.font.PDType1Font
+import com.tom_roush.pdfbox.pdmodel.graphics.image.PDImageXObject
+import com.tom_roush.pdfbox.text.PDFTextStripper
+import com.tom_roush.pdfbox.text.TextPosition
+import java.io.ByteArrayOutputStream
+import java.io.File
+import java.io.StringWriter
+import kotlin.math.max
+import kotlin.math.min
+
+data class TextGlyph(
+    val unicode: String,
+    val x: Float,
+    val y: Float, // Top-down coordinate
+    val width: Float,
+    val height: Float,
+    val fontSize: Float,
+    val fontName: String
+)
+
+class PageTextStripper(private val targetPageIndex: Int) : PDFTextStripper() {
+    val glyphs = mutableListOf<TextGlyph>()
+
+    init {
+        sortByPosition = true
+        startPage = targetPageIndex + 1
+        endPage = targetPageIndex + 1
+    }
+
+    override fun processTextPosition(text: TextPosition) {
+        val unicode = text.unicode
+        if (unicode.isNullOrEmpty()) return
+
+        glyphs.add(
+            TextGlyph(
+                unicode = unicode,
+                x = text.xDirAdj,
+                y = text.yDirAdj,
+                width = text.widthDirAdj,
+                height = text.heightDir,
+                fontSize = text.fontSizeInPt,
+                fontName = text.font?.name ?: "Helvetica"
+            )
+        )
+    }
+}
+
+class PdfTextEngine(private val context: Context) {
+    private var isInitialized = false
+
+    private fun ensureInit() {
+        if (!isInitialized) {
+            PDFBoxResourceLoader.init(context)
+            isInitialized = true
+        }
+    }
+
+    fun extractTextElements(pdfPath: String, pageIndex: Int): List<Map<String, Any>> {
+        ensureInit()
+        val file = File(pdfPath)
+        if (!file.exists()) return emptyList()
+
+        var document: PDDocument? = null
+        try {
+            document = PDDocument.load(file)
+            if (pageIndex < 0 || pageIndex >= document.numberOfPages) return emptyList()
+
+            val page = document.getPage(pageIndex)
+            val cropBox: PDRectangle = page.cropBox ?: page.mediaBox ?: PDRectangle(0f, 0f, 595f, 842f)
+            val pageWidth = cropBox.width
+            val pageHeight = cropBox.height
+
+            val stripper = PageTextStripper(pageIndex)
+            stripper.writeText(document, StringWriter())
+
+            if (stripper.glyphs.isEmpty()) {
+                return emptyList()
+            }
+
+            // Group glyphs into lines and words
+            val lines = groupGlyphsIntoLines(stripper.glyphs)
+            val result = mutableListOf<Map<String, Any>>()
+
+            var elementId = 0
+            for (line in lines) {
+                if (line.isEmpty()) continue
+
+                val lineText = line.joinToString("") { it.unicode }.trim()
+                if (lineText.isEmpty()) continue
+
+                var minX = Float.MAX_VALUE
+                var minY = Float.MAX_VALUE
+                var maxX = -Float.MAX_VALUE
+                var maxY = -Float.MAX_VALUE
+                var avgFontSize = 0f
+                val fontNames = mutableListOf<String>()
+
+                for (g in line) {
+                    minX = min(minX, g.x)
+                    minY = min(minY, g.y - g.height)
+                    maxX = max(maxX, g.x + g.width)
+                    maxY = max(maxY, g.y)
+                    avgFontSize += g.fontSize
+                    fontNames.add(g.fontName)
+                }
+                avgFontSize /= line.size
+
+                val dominantFont = fontNames.groupingBy { it }.eachCount().maxByOrNull { it.value }?.key ?: "Helvetica"
+                val isBold = dominantFont.contains("Bold", ignoreCase = true) || dominantFont.contains("Black", ignoreCase = true)
+                val isItalic = dominantFont.contains("Italic", ignoreCase = true) || dominantFont.contains("Oblique", ignoreCase = true)
+
+                val lineW = max(10f, maxX - minX)
+                val lineH = max(10f, maxY - minY)
+
+                val item = mutableMapOf<String, Any>(
+                    "id" to "pdf_${pageIndex}_${elementId++}",
+                    "text" to lineText,
+                    "x" to minX.toDouble(),
+                    "y" to minY.toDouble(),
+                    "width" to lineW.toDouble(),
+                    "height" to lineH.toDouble(),
+                    "pageWidth" to pageWidth.toDouble(),
+                    "pageHeight" to pageHeight.toDouble(),
+                    "fontSize" to avgFontSize.toDouble(),
+                    "fontName" to dominantFont,
+                    "isBold" to isBold,
+                    "isItalic" to isItalic,
+                    "pageIndex" to pageIndex
+                )
+                result.add(item)
+            }
+
+            return result
+        } catch (e: Exception) {
+            e.printStackTrace()
+            return emptyList()
+        } finally {
+            try {
+                document?.close()
+            } catch (_: Exception) {}
+        }
+    }
+
+    private fun groupGlyphsIntoLines(glyphs: List<TextGlyph>): List<List<TextGlyph>> {
+        if (glyphs.isEmpty()) return emptyList()
+
+        // Sort primarily by Y (top-down), secondarily by X
+        val sorted = glyphs.sortedWith(compareBy({ it.y }, { it.x }))
+        val lines = mutableListOf<MutableList<TextGlyph>>()
+        var currentLine = mutableListOf<TextGlyph>()
+        var currentY = sorted.first().y
+        var currentH = sorted.first().height
+
+        for (g in sorted) {
+            val yTolerance = max(3f, max(currentH, g.height) * 0.45f)
+            if (kotlin.math.abs(g.y - currentY) <= yTolerance) {
+                currentLine.add(g)
+            } else {
+                if (currentLine.isNotEmpty()) {
+                    currentLine.sortBy { it.x }
+                    lines.add(currentLine)
+                }
+                currentLine = mutableListOf(g)
+                currentY = g.y
+                currentH = g.height
+            }
+        }
+        if (currentLine.isNotEmpty()) {
+            currentLine.sortBy { it.x }
+            lines.add(currentLine)
+        }
+
+        return lines
+    }
+
+    fun saveModifiedPdf(
+        sourcePath: String,
+        outPath: String,
+        modifications: List<Map<String, Any>>
+    ): Boolean {
+        ensureInit()
+        val file = File(sourcePath)
+        if (!file.exists()) return false
+
+        var document: PDDocument? = null
+        try {
+            document = PDDocument.load(file)
+            val modsByPage = modifications.groupBy { (it["pageIndex"] as? Number)?.toInt() ?: 0 }
+
+            for ((pageIndex, pageMods) in modsByPage) {
+                if (pageIndex < 0 || pageIndex >= document.numberOfPages) continue
+                val page = document.getPage(pageIndex)
+                val cropBox: PDRectangle = page.cropBox ?: page.mediaBox ?: PDRectangle(0f, 0f, 595f, 842f)
+                val pageHeight = cropBox.height
+
+                val contentStream = PDPageContentStream(
+                    document,
+                    page,
+                    PDPageContentStream.AppendMode.APPEND,
+                    true,
+                    true
+                )
+
+                try {
+                    for (mod in pageMods) {
+                        val type = (mod["type"] as? String) ?: "text"
+                        val x = ((mod["x"] as? Number)?.toFloat() ?: 0f)
+                        val topY = ((mod["y"] as? Number)?.toFloat() ?: 0f)
+                        val w = ((mod["width"] as? Number)?.toFloat() ?: 100f)
+                        val h = ((mod["height"] as? Number)?.toFloat() ?: 20f)
+                        val text = (mod["text"] as? String) ?: ""
+                        val colorVal = ((mod["color"] as? Number)?.toLong() ?: 0xFF000000)
+                        val bgColorVal = ((mod["backgroundColor"] as? Number)?.toLong())
+                        val fontSize = ((mod["fontSize"] as? Number)?.toFloat() ?: 12f)
+                        val isBold = (mod["isBold"] as? Boolean) ?: false
+                        val isItalic = (mod["isItalic"] as? Boolean) ?: false
+                        val coverOriginal = (mod["coverOriginal"] as? Boolean) ?: true
+
+                        // Convert top-down Y to PDF bottom-up Y
+                        val pdfY = pageHeight - topY - h
+
+                        // 1. Draw whiteout / background if coverOriginal is true or bgColorVal is set
+                        if (coverOriginal || (bgColorVal != null && bgColorVal != 0L)) {
+                            contentStream.saveGraphicsState()
+                            if (bgColorVal != null && bgColorVal != 0L) {
+                                val r = ((bgColorVal shr 16) and 0xFF) / 255f
+                                val g = ((bgColorVal shr 8) and 0xFF) / 255f
+                                val b = (bgColorVal and 0xFF) / 255f
+                                contentStream.setNonStrokingColor(r, g, b)
+                            } else {
+                                contentStream.setNonStrokingColor(1f, 1f, 1f) // White
+                            }
+                            // Add slight margin to ensure full erasure of anti-aliasing
+                            contentStream.addRect(x - 1f, pdfY - 1f, w + 2f, h + 2f)
+                            contentStream.fill()
+                            contentStream.restoreGraphicsState()
+                        }
+
+                        // 2. Write new text
+                        if (type == "text" && text.isNotEmpty()) {
+                            contentStream.saveGraphicsState()
+                            contentStream.beginText()
+
+                            val font = when {
+                                isBold && isItalic -> PDType1Font.HELVETICA_BOLD_OBLIQUE
+                                isBold -> PDType1Font.HELVETICA_BOLD
+                                isItalic -> PDType1Font.HELVETICA_OBLIQUE
+                                else -> PDType1Font.HELVETICA
+                            }
+                            contentStream.setFont(font, fontSize)
+
+                            val r = ((colorVal shr 16) and 0xFF) / 255f
+                            val g = ((colorVal shr 8) and 0xFF) / 255f
+                            val b = (colorVal and 0xFF) / 255f
+                            contentStream.setNonStrokingColor(r, g, b)
+
+                            // Baseline placement: roughly 20-25% from bottom of the bounding box
+                            val baselineY = pdfY + (h * 0.22f).coerceAtLeast(fontSize * 0.2f)
+                            contentStream.newLineAtOffset(x, baselineY)
+
+                            val cleanText = sanitizePdfText(text)
+                            try {
+                                contentStream.showText(cleanText)
+                            } catch (e: Exception) {
+                                // Fallback: replace unencodable characters with ascii
+                                val asciiOnly = cleanText.filter { it.code in 32..126 }
+                                contentStream.showText(asciiOnly)
+                            }
+
+                            contentStream.endText()
+                            contentStream.restoreGraphicsState()
+                        }
+                    }
+                } finally {
+                    contentStream.close()
+                }
+            }
+
+            val outFile = File(outPath)
+            outFile.parentFile?.mkdirs()
+            document.save(outFile)
+            return true
+        } catch (e: Exception) {
+            e.printStackTrace()
+            return false
+        } finally {
+            try {
+                document?.close()
+            } catch (_: Exception) {}
+        }
+    }
+
+    private fun sanitizePdfText(input: String): String {
+        val sb = StringBuilder()
+        for (c in input) {
+            val code = c.code
+            // WinAnsi supported range
+            if (code in 32..126 || code in 160..255) {
+                sb.append(c)
+            } else if (c == '\t') {
+                sb.append("   ")
+            } else if (c == '‘' || c == '’') {
+                sb.append('\'')
+            } else if (c == '“' || c == '”') {
+                sb.append('"')
+            } else if (c == '–' || c == '—') {
+                sb.append('-')
+            } else {
+                sb.append(' ')
+            }
+        }
+        return sb.toString()
+    }
+}

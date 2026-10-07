@@ -28,6 +28,7 @@ import 'package:pdfx/pdfx.dart';
 import 'package:read_pdf_text/read_pdf_text.dart';
 
 import '../services/pdf_export_isolate.dart';
+import '../services/pdf_native_text_service.dart';
 
 // ── Editor Modes & Overlay models ─────────────────────────────────────────────
 enum EditorMode { view, edit, annotate, sign, fillOut }
@@ -35,22 +36,44 @@ enum EditorMode { view, edit, annotate, sign, fillOut }
 enum OverlayType { text, drawing, highlight, signature, image, formField }
 
 class PdfDetectedTextElement {
+  final String id;
   final String text;
   final Rect boundingBox;
-  final double imageWidth;
-  final double imageHeight;
+  final double sourceWidth;
+  final double sourceHeight;
+  final double fontSize;
+  final String fontName;
+  final bool isBold;
+  final bool isItalic;
+  final bool isNativePdfText;
+  final int pageIndex;
 
   PdfDetectedTextElement({
+    String? id,
     required this.text,
     required this.boundingBox,
-    required this.imageWidth,
-    required this.imageHeight,
-  });
+    double? imageWidth,
+    double? imageHeight,
+    double? sourceWidth,
+    double? sourceHeight,
+    this.fontSize = 14.0,
+    this.fontName = 'Helvetica',
+    this.isBold = false,
+    this.isItalic = false,
+    this.isNativePdfText = false,
+    this.pageIndex = 0,
+  })  : id = id ?? 'elem_${text.hashCode}_${boundingBox.left.toInt()}_${boundingBox.top.toInt()}',
+        sourceWidth = sourceWidth ?? (imageWidth ?? 1080.0),
+        sourceHeight = sourceHeight ?? (imageHeight ?? 1920.0);
+
+  // Backward compatibility getters
+  double get imageWidth => sourceWidth;
+  double get imageHeight => sourceHeight;
 
   Rect getScaledRect(Size targetSize) {
-    if (imageWidth <= 0 || imageHeight <= 0) return boundingBox;
-    final scaleX = targetSize.width / imageWidth;
-    final scaleY = targetSize.height / imageHeight;
+    if (sourceWidth <= 0 || sourceHeight <= 0) return boundingBox;
+    final scaleX = targetSize.width / sourceWidth;
+    final scaleY = targetSize.height / sourceHeight;
     return Rect.fromLTRB(
       boundingBox.left * scaleX,
       boundingBox.top * scaleY,
@@ -79,6 +102,17 @@ class PdfOverlay {
   String? imagePath;
   Uint8List? imageBytes;
 
+  // Vector replacement & original text tracking
+  PdfDetectedTextElement? originalDetectedElement;
+  String? originalText;
+  double? originalPdfX;
+  double? originalPdfY;
+  double? originalPdfW;
+  double? originalPdfH;
+  double? originalLayoutPageWidth;
+  double? originalLayoutPageHeight;
+  bool coverOriginal;
+
   PdfOverlay({
     required this.id,
     required this.pageIndex,
@@ -97,6 +131,15 @@ class PdfOverlay {
     this.strokes,
     this.imagePath,
     this.imageBytes,
+    this.originalDetectedElement,
+    this.originalText,
+    this.originalPdfX,
+    this.originalPdfY,
+    this.originalPdfW,
+    this.originalPdfH,
+    this.originalLayoutPageWidth,
+    this.originalLayoutPageHeight,
+    this.coverOriginal = true,
   });
 
   PdfOverlay copyWith({
@@ -117,6 +160,15 @@ class PdfOverlay {
     List<Offset>? strokes,
     String? imagePath,
     Uint8List? imageBytes,
+    PdfDetectedTextElement? originalDetectedElement,
+    String? originalText,
+    double? originalPdfX,
+    double? originalPdfY,
+    double? originalPdfW,
+    double? originalPdfH,
+    double? originalLayoutPageWidth,
+    double? originalLayoutPageHeight,
+    bool? coverOriginal,
   }) {
     return PdfOverlay(
       id: id ?? this.id,
@@ -136,6 +188,15 @@ class PdfOverlay {
       strokes: strokes ?? (this.strokes != null ? List.from(this.strokes!) : null),
       imagePath: imagePath ?? this.imagePath,
       imageBytes: imageBytes ?? this.imageBytes,
+      originalDetectedElement: originalDetectedElement ?? this.originalDetectedElement,
+      originalText: originalText ?? this.originalText,
+      originalPdfX: originalPdfX ?? this.originalPdfX,
+      originalPdfY: originalPdfY ?? this.originalPdfY,
+      originalPdfW: originalPdfW ?? this.originalPdfW,
+      originalPdfH: originalPdfH ?? this.originalPdfH,
+      originalLayoutPageWidth: originalLayoutPageWidth ?? this.originalLayoutPageWidth,
+      originalLayoutPageHeight: originalLayoutPageHeight ?? this.originalLayoutPageHeight,
+      coverOriginal: coverOriginal ?? this.coverOriginal,
     );
   }
 }
@@ -437,10 +498,67 @@ class PdfEditorController extends GetxController {
     if (detectedPageTexts.containsKey(pageIndex)) {
       return detectedPageTexts[pageIndex]!;
     }
-    if (_document == null) return [];
+    if (_document == null && pdfPath == null) return [];
 
     try {
       isDetectingText.value = true;
+
+      // 1. Try native PDFBox vector text extraction first
+      if (pdfPath != null) {
+        try {
+          final nativeData = await NativePdfTextService.extractTextElements(
+            pdfPath: pdfPath!,
+            pageIndex: pageIndex,
+          );
+
+          if (nativeData.isNotEmpty) {
+            final List<PdfDetectedTextElement> elements = [];
+            for (var i = 0; i < nativeData.length; i++) {
+              final raw = nativeData[i];
+              final text = (raw['text'] as String?)?.trim() ?? '';
+              if (text.isEmpty) continue;
+
+              final x = (raw['x'] as num).toDouble();
+              final y = (raw['y'] as num).toDouble();
+              final w = (raw['width'] as num).toDouble();
+              final h = (raw['height'] as num).toDouble();
+              final pw = (raw['pageWidth'] as num).toDouble();
+              final ph = (raw['pageHeight'] as num).toDouble();
+              final fontSize = (raw['fontSize'] as num?)?.toDouble() ?? 14.0;
+              final fontName = (raw['fontName'] as String?) ?? 'Helvetica';
+              final isBold = raw['isBold'] as bool? ?? false;
+              final isItalic = raw['isItalic'] as bool? ?? false;
+              final id = (raw['id'] as String?) ?? 'pdf_${pageIndex}_$i';
+
+              elements.add(PdfDetectedTextElement(
+                id: id,
+                text: text,
+                boundingBox: Rect.fromLTWH(x, y, w, h),
+                sourceWidth: pw,
+                sourceHeight: ph,
+                fontSize: fontSize,
+                fontName: fontName,
+                isBold: isBold,
+                isItalic: isItalic,
+                isNativePdfText: true,
+                pageIndex: pageIndex,
+              ));
+            }
+
+            if (elements.isNotEmpty) {
+              log('[PdfEditor] Extracted ${elements.length} native vector text elements on page $pageIndex');
+              detectedPageTexts[pageIndex] = elements;
+              detectedPageTexts.refresh();
+              return elements;
+            }
+          }
+        } catch (e) {
+          log('[PdfEditor] Native text extraction exception on page $pageIndex: $e');
+        }
+      }
+
+      // 2. Fallback to ML Kit OCR for scanned image-only PDFs
+      log('[PdfEditor] Fallback to ML Kit OCR on page $pageIndex...');
       final pageImage = await getPageImage(pageIndex);
       if (pageImage == null || pageImage.bytes.isEmpty) return [];
 
@@ -459,16 +577,20 @@ class PdfEditorController extends GetxController {
       final imgW = (pageImage.width ?? 1080).toDouble();
       final imgH = (pageImage.height ?? 1920).toDouble();
 
+      var ocrIdx = 0;
       for (final block in recognized.blocks) {
         for (final line in block.lines) {
           for (final elem in line.elements) {
             final t = elem.text.trim();
             if (t.isNotEmpty) {
               elements.add(PdfDetectedTextElement(
+                id: 'ocr_${pageIndex}_${ocrIdx++}',
                 text: t,
                 boundingBox: elem.boundingBox,
-                imageWidth: imgW,
-                imageHeight: imgH,
+                sourceWidth: imgW,
+                sourceHeight: imgH,
+                isNativePdfText: false,
+                pageIndex: pageIndex,
               ));
             }
           }
@@ -476,10 +598,13 @@ class PdfEditorController extends GetxController {
             final lineText = line.text.trim();
             if (lineText.isNotEmpty) {
               elements.add(PdfDetectedTextElement(
+                id: 'ocr_line_${pageIndex}_${ocrIdx++}',
                 text: lineText,
                 boundingBox: line.boundingBox,
-                imageWidth: imgW,
-                imageHeight: imgH,
+                sourceWidth: imgW,
+                sourceHeight: imgH,
+                isNativePdfText: false,
+                pageIndex: pageIndex,
               ));
             }
           }
@@ -510,7 +635,7 @@ class PdfEditorController extends GetxController {
 
     for (final elem in list) {
       final scaled = elem.getScaledRect(pageSize);
-      final hitRect = scaled.inflate(8.0);
+      final hitRect = scaled.inflate(6.0);
       if (hitRect.contains(tapPos)) {
         final area = scaled.width * scaled.height;
         if (area < minArea) {
@@ -520,7 +645,79 @@ class PdfEditorController extends GetxController {
       }
     }
 
+    if (bestMatch != null) {
+      final scaled = bestMatch.getScaledRect(pageSize);
+      log('[PdfEditor] Hit text: "${bestMatch.text}" at tapPos: $tapPos, page: $pageIndex, '
+          'sourceBox: ${bestMatch.boundingBox}, scaledBox: $scaled, isNative: ${bestMatch.isNativePdfText}');
+    }
+
     return bestMatch;
+  }
+
+  /// Adobe Acrobat "Edit PDF" flow:
+  /// Tapping existing text immediately selects it, frames it with a red bounding box,
+  /// and enables in-place editing.
+  PdfOverlay selectOrStartEditingText({
+    required int pageIndex,
+    required PdfDetectedTextElement detectedElement,
+    required Size pageSize,
+  }) {
+    recordHistory();
+    final scaledRect = detectedElement.getScaledRect(pageSize);
+
+    log('[PdfEditor] SELECT EXISTING TEXT: page=$pageIndex, text="${detectedElement.text}", '
+        'native=${detectedElement.isNativePdfText}, pdfBox=${detectedElement.boundingBox}, '
+        'scaledRect=$scaledRect, pageSize=$pageSize');
+
+    // Check if an overlay already exists for this element
+    final existingIndex = overlays.indexWhere((o) =>
+        o.pageIndex == pageIndex &&
+        (o.id == detectedElement.id ||
+            (o.originalDetectedElement?.id == detectedElement.id) ||
+            ((o.position - Offset(scaledRect.left, scaledRect.top)).distance < 5.0 &&
+                o.originalText == detectedElement.text)));
+
+    if (existingIndex >= 0) {
+      final existing = overlays[existingIndex];
+      selectedOverlayId.value = existing.id;
+      return existing;
+    }
+
+    final scale = detectedElement.sourceWidth > 0
+        ? pageSize.width / detectedElement.sourceWidth
+        : 1.0;
+    final displayFontSize = (detectedElement.fontSize * scale).clamp(8.0, 72.0);
+
+    final overlay = PdfOverlay(
+      id: detectedElement.id,
+      pageIndex: pageIndex,
+      type: OverlayType.text,
+      position: Offset(scaledRect.left - 1.0, scaledRect.top - 1.0),
+      size: Size(
+        math.max(32.0, scaledRect.width + 4.0),
+        math.max(18.0, scaledRect.height + 4.0),
+      ),
+      text: detectedElement.text,
+      color: Colors.black87,
+      backgroundColor: Colors.white, // Covers original text seamlessly
+      fontSize: displayFontSize,
+      isBold: detectedElement.isBold,
+      isItalic: detectedElement.isItalic,
+      fontFamily: detectedElement.fontName,
+      originalDetectedElement: detectedElement,
+      originalText: detectedElement.text,
+      originalPdfX: detectedElement.isNativePdfText ? detectedElement.boundingBox.left : null,
+      originalPdfY: detectedElement.isNativePdfText ? detectedElement.boundingBox.top : null,
+      originalPdfW: detectedElement.isNativePdfText ? detectedElement.boundingBox.width : null,
+      originalPdfH: detectedElement.isNativePdfText ? detectedElement.boundingBox.height : null,
+      originalLayoutPageWidth: pageSize.width,
+      originalLayoutPageHeight: pageSize.height,
+      coverOriginal: true,
+    );
+
+    overlays.add(overlay);
+    selectedOverlayId.value = overlay.id;
+    return overlay;
   }
 
   @override
@@ -1029,6 +1226,72 @@ class PdfEditorController extends GetxController {
       final outPath =
           '${tmpDir.path}/edited_${DateTime.now().millisecondsSinceEpoch}.pdf';
 
+      // 1. If any overlays are text edits, attempt native vector modification to preserve vector fidelity
+      final textReplacements = overlays
+          .where((o) => o.type == OverlayType.text)
+          .toList();
+
+      final nonTextOverlays = overlays
+          .where((o) => o.type != OverlayType.text)
+          .toList();
+
+      if (textReplacements.isNotEmpty && nonTextOverlays.isEmpty) {
+        final modifications = <Map<String, dynamic>>[];
+
+        for (final o in textReplacements) {
+          final origElem = o.originalDetectedElement;
+          final pageW = origElem?.sourceWidth ?? 595.0;
+          final pageH = origElem?.sourceHeight ?? 842.0;
+
+          final layoutW = (o.originalLayoutPageWidth != null && o.originalLayoutPageWidth! > 0)
+              ? o.originalLayoutPageWidth!
+              : pageW;
+          final layoutH = (o.originalLayoutPageHeight != null && o.originalLayoutPageHeight! > 0)
+              ? o.originalLayoutPageHeight!
+              : pageH;
+
+          final scaleX = pageW / layoutW;
+          final scaleY = pageH / layoutH;
+
+          final pdfX = o.originalPdfX ?? (o.position.dx * scaleX);
+          final pdfY = o.originalPdfY ?? (o.position.dy * scaleY);
+          final pdfW = o.originalPdfW ?? (o.size.width * scaleX);
+          final pdfH = o.originalPdfH ?? (o.size.height * scaleY);
+          final ptFontSize = (o.fontSize * (pageW / layoutW)).clamp(6.0, 72.0);
+
+          modifications.add({
+            'pageIndex': o.pageIndex,
+            'type': 'text',
+            'x': pdfX,
+            'y': pdfY,
+            'width': pdfW,
+            'height': pdfH,
+            'text': o.text ?? '',
+            'color': o.color.toARGB32(),
+            'backgroundColor': o.backgroundColor?.toARGB32(),
+            'fontSize': ptFontSize,
+            'isBold': o.isBold,
+            'isItalic': o.isItalic,
+            'coverOriginal': o.coverOriginal,
+          });
+        }
+
+        log('[PdfEditor] Saving ${modifications.length} modifications with native vector PDF engine...');
+        final nativeSuccess = await NativePdfTextService.saveModifiedPdf(
+          sourcePath: pdfPath!,
+          outPath: outPath,
+          modifications: modifications,
+        );
+
+        if (nativeSuccess) {
+          log('[PdfEditor] Native vector PDF save succeeded: $outPath');
+          return outPath;
+        } else {
+          log('[PdfEditor] Native save returned false, falling back to isolate export...');
+        }
+      }
+
+      // 2. Standard isolate export for drawings, signatures, images or fallback
       final overlayData = overlays
           .map(_encodeOverlay)
           .toList();
