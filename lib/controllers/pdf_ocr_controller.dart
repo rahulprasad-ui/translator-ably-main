@@ -25,7 +25,9 @@ import '../ads/ad_helper.dart';
 import '../helper/my_dialogs.dart';
 import '../model/home.dart';
 import '../helper/pref.dart';
+import '../screen/document_scanner_screen.dart';
 import '../screen/tab/text_translate_tab.dart';
+import '../services/document_scan_service.dart';
 
 enum OcrSourceType {
   pdf,
@@ -394,57 +396,28 @@ class PdfOcrController extends GetxController {
     }
   }
 
+  /// Opens the live Adobe-Scan-style document scanner.
+  ///
+  /// The scanner detects the page in the live preview, crops to its four
+  /// corners and perspective-corrects it, so OCR runs on the deskewed document
+  /// instead of the whole camera frame. Falls back to the system camera app when
+  /// the live scanner cannot start on this device.
   Future<void> captureImageFromCamera() async {
     try {
       isPicking.value = true;
-      String? photoPath;
 
-      try {
-        final photo = await _imagePicker.pickImage(
-          source: ImageSource.camera,
-          imageQuality: 95,
-        );
-        if (photo != null) {
-          photoPath = photo.path;
-        }
-      } on MissingPluginException catch (_) {
-        log('[PdfOcr] Camera plugin requires full app restart');
-        MyDialogs.info(
-          msg:
-              'Camera plugin added! Please fully stop and restart (Re-run) the app once to enable camera access.',
-        );
-        // Fallback to file/image picker so user is not blocked
-        final result = await FilePicker.pickFiles(type: FileType.image);
-        if (result.isNotEmpty && result.first.path != null) {
-          photoPath = result.first.path;
-        }
-      } catch (e) {
-        log('[PdfOcr] Camera error: $e');
-        final result = await FilePicker.pickFiles(type: FileType.image);
-        if (result.isNotEmpty && result.first.path != null) {
-          photoPath = result.first.path;
-        }
+      final outcome = await Get.to<DocumentScanOutcome>(
+        () => const DocumentScannerScreen(),
+      );
+
+      if (outcome != null && outcome.imagePaths.isNotEmpty) {
+        await _addCameraScanImages(outcome.imagePaths);
+        return;
       }
 
-      if (photoPath == null) return;
-
-      final file = File(photoPath);
-      if (await file.exists()) {
-        sourceType.value = OcrSourceType.images;
-        resetResults();
-
-        final size = await file.length();
-        final fileName = photoPath.split(Platform.pathSeparator).last;
-        final item = OcrImageInputItem(
-          id: '${DateTime.now().millisecondsSinceEpoch}_camera',
-          path: photoPath,
-          name: fileName.isNotEmpty ? fileName : 'Camera_Scan.jpg',
-          sizeInBytes: size,
-        );
-        pickedImages.add(item);
-
-        // Automatically start OCR right after camera capture so document layer appears immediately!
-        startOcr();
+      // The camera could not be used (permission denied / unsupported device).
+      if (outcome != null && outcome.cameraFailed) {
+        await _captureWithSystemCamera();
       }
     } catch (e) {
       log('[PdfOcr] captureImageFromCamera error: $e');
@@ -452,6 +425,79 @@ class PdfOcrController extends GetxController {
     } finally {
       isPicking.value = false;
     }
+  }
+
+  /// Legacy `image_picker` capture path, retained as a fallback for devices
+  /// where the live document scanner cannot start.
+  Future<void> _captureWithSystemCamera() async {
+    String? photoPath;
+
+    try {
+      final photo = await _imagePicker.pickImage(
+        source: ImageSource.camera,
+        imageQuality: 95,
+      );
+      if (photo != null) {
+        photoPath = photo.path;
+      }
+    } on MissingPluginException catch (_) {
+      log('[PdfOcr] Camera plugin requires full app restart');
+      MyDialogs.info(
+        msg:
+            'Camera plugin added! Please fully stop and restart (Re-run) the app once to enable camera access.',
+      );
+      // Fallback to file/image picker so user is not blocked
+      final result = await FilePicker.pickFiles(type: FileType.image);
+      if (result.isNotEmpty && result.first.path != null) {
+        photoPath = result.first.path;
+      }
+    } catch (e) {
+      log('[PdfOcr] Camera error: $e');
+      final result = await FilePicker.pickFiles(type: FileType.image);
+      if (result.isNotEmpty && result.first.path != null) {
+        photoPath = result.first.path;
+      }
+    }
+
+    if (photoPath == null) return;
+    await _addCameraScanImages([photoPath]);
+  }
+
+  /// Adds scanner output (or a fallback camera photo) to the OCR input list and
+  /// immediately runs OCR so the document layer appears without extra taps.
+  Future<void> _addCameraScanImages(List<String> paths) async {
+    final added = <OcrImageInputItem>[];
+
+    for (final path in paths) {
+      final file = File(path);
+      if (!await file.exists()) continue;
+
+      final size = await file.length();
+      final fileName = path.split(Platform.pathSeparator).last;
+      added.add(
+        OcrImageInputItem(
+          id: '${DateTime.now().millisecondsSinceEpoch}_$fileName',
+          path: path,
+          name: fileName.isNotEmpty ? fileName : 'Camera_Scan.jpg',
+          sizeInBytes: size,
+        ),
+      );
+    }
+
+    if (added.isEmpty) return;
+
+    sourceType.value = OcrSourceType.images;
+    resetResults();
+
+    for (final item in added) {
+      if (!pickedImages.any((e) => e.path == item.path)) {
+        pickedImages.add(item);
+      }
+    }
+
+    // Automatically start OCR right after camera capture so the document layer
+    // appears immediately!
+    startOcr();
   }
 
   void removeImage(int index) {

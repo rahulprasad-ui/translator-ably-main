@@ -41,6 +41,10 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>NSCameraUsageDescription</key>
+	<string>Ably PDF uses the camera to scan documents and turn them into editable text.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Ably PDF may use the microphone while the document scanner camera is active.</string>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
