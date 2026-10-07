@@ -39,7 +39,7 @@ class CustomNativeAd extends StatelessWidget {
             : const SizedBox());
   }
 
-  _googleAd() {
+  Widget _googleAd() {
     return Container(
         padding: border ? const EdgeInsets.only(top: 5, bottom: 5) : null,
         margin: margin,

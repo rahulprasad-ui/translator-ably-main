@@ -222,23 +222,42 @@ class AdHelper {
 
   //*****************Banner Ad******************
 
-  static void loadBannerAd({required BannerAdController adController}) {
-    log('Native Ad Id: ${Config.nativeAd}');
+  static void loadBannerAd({
+    required BannerAdController adController,
+    AdSize adSize = AdSize.banner,
+    int retryAttempt = 0,
+  }) {
+    if (Config.hideAds) {
+      debugPrint('[AdHelper] Banner Ad skipped - hideAds is true');
+      return;
+    }
 
-    //
-    // if (Config.hideAds) return;
+    debugPrint('[AdHelper] Banner Ad loading (attempt ${retryAttempt + 1}): ${Config.bannerAd}');
 
     BannerAd(
       adUnitId: Config.bannerAd,
-      size: AdSize.banner, // Change according to your needs
+      size: adSize,
       listener: BannerAdListener(
         onAdLoaded: (ad) {
-          log('Banner Ad loaded.');
-          adController.adLoaded.value = true;
+          debugPrint('[AdHelper] Banner Ad loaded successfully.');
           adController.ad = ad as BannerAd;
+          adController.adLoaded.value = true;
         },
         onAdFailedToLoad: (ad, error) {
-          log('Banner Ad failed to load: $error');
+          ad.dispose();
+          adController.ad = null;
+          adController.adLoaded.value = false;
+          debugPrint('[AdHelper] Banner Ad failed to load: $error');
+
+          if (retryAttempt < 3 && !adController.adLoaded.value) {
+            Future.delayed(const Duration(seconds: 3), () {
+              loadBannerAd(
+                adController: adController,
+                adSize: adSize,
+                retryAttempt: retryAttempt + 1,
+              );
+            });
+          }
         },
       ),
       request: const AdRequest(),
