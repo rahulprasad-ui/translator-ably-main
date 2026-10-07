@@ -35,7 +35,7 @@
     </queries>
 
     <application
-        android:label="All Language Translator"
+        android:label="Ably PDF"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:largeHeap="true"

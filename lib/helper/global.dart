@@ -4,7 +4,7 @@ import 'dart:math' as math;
 //global object for accessing device screen size
 late Size mq;
 
-const appName = 'All Language Translator';
+const appName = 'Ably PDF';
 const packageName = 'com.translator.voicetotext.dictionarywordgame.pdfimage';
 const todo = 'Needs to be implemented according to your need';
 

@@ -44,7 +44,7 @@ class RazorpayHelper {
 
   static void openCheckout({
     int amountInPaise = 10000, // ₹100.00
-    String name = 'All Language Translator',
+    String name = 'Ably PDF',
     String description = 'Lifetime Premium Access (No Ads)',
   }) {
     try {
