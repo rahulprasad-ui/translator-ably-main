@@ -16,7 +16,6 @@
 
 import 'dart:io';
 import 'dart:typed_data';
-import 'dart:ui' as ui;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -37,6 +36,10 @@ import 'pdf_merge_screen.dart';
 import 'pdf_ocr_screen.dart';
 import 'pdf_remove_watermark_screen.dart';
 import 'pdf_sign_screen.dart';
+import 'dart:math' as math;
+
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
+
 import 'pdf_split_screen.dart';
 import 'pdf_to_excel_screen.dart';
 import 'pdf_to_jpg_screen.dart';
@@ -66,7 +69,9 @@ class _PdfEditorScreenState extends State<PdfEditorScreen>
   bool _isDrawing = false;
   bool _isHighlightMode = false;
   Color _drawColor = const Color(0xFFEF4444);
-  double _strokeWidth = 3.0;
+
+  /// page index -> matched line index (per current search)
+  final Map<int, int> _searchedLineByPage = {};
 
   // Design tokens matching app & video frames
   static const _bg = Color(0xFFF1F5F9);
@@ -198,8 +203,7 @@ class _PdfEditorScreenState extends State<PdfEditorScreen>
     );
     if (result != null && mounted) {
       c.goToPage(result);
-      final pageH = MediaQuery.of(context).size.height * .85;
-      c.scrollToPage(result, pageH);
+      c.scrollToIndex(result);
     }
   }
 
@@ -266,73 +270,339 @@ class _PdfEditorScreenState extends State<PdfEditorScreen>
   }
 
   // ── In-place Add or Edit Text Dialog ───────────────────────────────────────
-  Future<void> _showTextEditDialog({String? existingId, String? initialText}) async {
+  Future<void> _showTextEditDialog({
+    String? existingId,
+    String? initialText,
+    int? pageIndex,
+    Offset? initialPosition,
+    PdfDetectedTextElement? detectedElement,
+    Size? pageSize,
+  }) async {
     final ctrl = TextEditingController(text: initialText ?? '');
-    final isEditing = existingId != null;
+    final isEditingExistingOverlay = existingId != null;
+    final isReplacingOriginalText = detectedElement != null;
+    bool coverOriginalText = true; // Default: cover original PDF text with clean white background
 
-    final result = await showDialog<String>(
+    final result = await showDialog<Map<String, dynamic>>(
       context: context,
-      builder: (_) => AlertDialog(
-        backgroundColor: Colors.white,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: Text(
-          isEditing ? 'Edit Text' : 'Insert Text',
-          style: const TextStyle(color: _text, fontWeight: FontWeight.w700),
+      builder: (_) => StatefulBuilder(
+        builder: (ctx, setDlgState) => AlertDialog(
+          backgroundColor: Colors.white,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: Row(
+            children: [
+              Icon(
+                isReplacingOriginalText
+                    ? Icons.auto_fix_high_rounded
+                    : (isEditingExistingOverlay
+                        ? Icons.edit_rounded
+                        : Icons.post_add_rounded),
+                color: _accent,
+                size: 22,
+              ),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  isReplacingOriginalText
+                      ? 'Edit Original PDF Text'
+                      : (isEditingExistingOverlay ? 'Edit Text' : 'Insert / Replace Text'),
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                      color: _text, fontWeight: FontWeight.w700, fontSize: 17),
+                ),
+              ),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (isReplacingOriginalText) ...[
+                Container(
+                  margin: const EdgeInsets.only(bottom: 12),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFEFF6FF),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: const Color(0xFFBFDBFE)),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.info_outline_rounded,
+                          size: 16, color: Color(0xFF2563EB)),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          'Original: "${detectedElement.text}"',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: Color(0xFF1D4ED8)),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+              TextField(
+                controller: ctrl,
+                autofocus: true,
+                maxLines: 3,
+                style: const TextStyle(color: _text, fontSize: 15),
+                decoration: InputDecoration(
+                  hintText: isReplacingOriginalText
+                      ? 'Type replacement text (e.g. ${detectedElement.text} Kumar)...'
+                      : 'Type your text (e.g. Rahul Kumar)...',
+                  hintStyle: const TextStyle(color: _subtext),
+                  filled: true,
+                  fillColor: const Color(0xFFF8FAFC),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    borderSide: const BorderSide(color: _border),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    borderSide: const BorderSide(color: _border),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    borderSide: const BorderSide(color: _accent, width: 1.5),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+              GestureDetector(
+                onTap: () {
+                  setDlgState(() {
+                    coverOriginalText = !coverOriginalText;
+                  });
+                },
+                child: Row(
+                  children: [
+                    Checkbox(
+                      value: coverOriginalText,
+                      activeColor: _accent,
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(4)),
+                      onChanged: (val) {
+                        setDlgState(() {
+                          coverOriginalText = val ?? true;
+                        });
+                      },
+                    ),
+                    const Expanded(
+                      child: Text(
+                        'Erase / Cover original text (Whiteout)',
+                        style: TextStyle(
+                          color: _text,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel', style: TextStyle(color: _subtext)),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _accent,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
+              ),
+              onPressed: () {
+                final txt = ctrl.text.trim();
+                if (txt.isNotEmpty) {
+                  Navigator.pop(context, {
+                    'text': txt,
+                    'cover': coverOriginalText,
+                  });
+                }
+              },
+              child: Text(isReplacingOriginalText
+                  ? 'Replace in PDF'
+                  : (isEditingExistingOverlay ? 'Apply' : 'Insert / Replace')),
+            ),
+          ],
         ),
-        content: TextField(
-          controller: ctrl,
-          autofocus: true,
-          maxLines: 4,
-          style: const TextStyle(color: _text, fontSize: 15),
-          decoration: InputDecoration(
-            hintText: 'Type your text here...',
-            hintStyle: const TextStyle(color: _subtext),
-            filled: true,
-            fillColor: const Color(0xFFF8FAFC),
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(14),
-              borderSide: const BorderSide(color: _border),
-            ),
-            enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(14),
-              borderSide: const BorderSide(color: _border),
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(14),
-              borderSide: const BorderSide(color: _accent, width: 1.5),
-            ),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel', style: TextStyle(color: _subtext)),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: _accent,
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12)),
-            ),
-            onPressed: () => Navigator.pop(context, ctrl.text.trim()),
-            child: Text(isEditing ? 'Apply' : 'Add'),
-          ),
-        ],
       ),
     );
 
-    if (result != null && result.isNotEmpty) {
-      if (isEditing) {
-        c.updateOverlayText(existingId, result);
+    if (result != null) {
+      final text = result['text'] as String;
+      final cover = result['cover'] as bool;
+
+      if (isReplacingOriginalText) {
+        c.replaceDetectedText(
+          pageIndex: pageIndex ?? c.currentPage.value,
+          element: detectedElement,
+          pageSize: pageSize ?? const Size(400, 600),
+          newText: text,
+        );
+        Get.snackbar(
+          'Text Replaced in PDF',
+          'Replaced "${detectedElement.text}" with "$text"',
+          backgroundColor: const Color(0xFF10B981).withValues(alpha: 0.95),
+          colorText: Colors.white,
+          snackPosition: SnackPosition.TOP,
+          duration: const Duration(seconds: 3),
+        );
+      } else if (isEditingExistingOverlay) {
+        c.updateOverlayText(existingId, text);
+        if (cover) {
+          final ov = c.overlays.firstWhereOrNull((o) => o.id == existingId);
+          if (ov != null && ov.backgroundColor == null) {
+            c.toggleBackgroundWhiteout(existingId);
+          }
+        }
       } else {
-        c.addTextOverlay(
-          c.currentPage.value,
-          const Offset(50, 80),
-          result,
+        recordOverlayWithCover(
+          pageIndex: pageIndex ?? c.currentPage.value,
+          pos: initialPosition ?? const Offset(50, 80),
+          text: text,
+          cover: cover,
         );
       }
     }
+  }
+
+  void recordOverlayWithCover({
+    required int pageIndex,
+    required Offset pos,
+    required String text,
+    required bool cover,
+  }) {
+    c.recordHistory();
+    final newId = 'txt_${DateTime.now().millisecondsSinceEpoch}';
+    final overlay = PdfOverlay(
+      id: newId,
+      pageIndex: pageIndex,
+      type: OverlayType.text,
+      position: pos,
+      size: Size(math.max(160.0, text.length * 10.0 + 30.0), 44),
+      text: text,
+      color: Colors.black87,
+      backgroundColor: cover ? Colors.white : Colors.transparent,
+      fontSize: 16,
+    );
+    c.overlays.add(overlay);
+    c.selectedOverlayId.value = newId;
+  }
+
+  // ── Direct Find & Replace Modal ───────────────────────────────────────────
+  Future<void> _showFindAndReplaceDialog() async {
+    final findCtrl = TextEditingController();
+    final replaceCtrl = TextEditingController();
+
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Padding(
+        padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+        child: Container(
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Row(
+                    children: const [
+                      Icon(Icons.find_replace_rounded, color: _accent, size: 24),
+                      SizedBox(width: 8),
+                      Text(
+                        'Find & Replace Text',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          color: _text,
+                        ),
+                      ),
+                    ],
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close_rounded),
+                    onPressed: () => Navigator.pop(ctx),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Enter original word in PDF (e.g. "rahul") and what to replace it with (e.g. "rahul kumar").',
+                style: TextStyle(fontSize: 13, color: _subtext),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: findCtrl,
+                autofocus: true,
+                decoration: InputDecoration(
+                  labelText: 'Find in PDF',
+                  hintText: 'e.g. rahul',
+                  prefixIcon: const Icon(Icons.search_rounded),
+                  filled: true,
+                  fillColor: const Color(0xFFF8FAFC),
+                  border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: const BorderSide(color: _border)),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: replaceCtrl,
+                decoration: InputDecoration(
+                  labelText: 'Replace with',
+                  hintText: 'e.g. rahul kumar',
+                  prefixIcon: const Icon(Icons.edit_note_rounded),
+                  filled: true,
+                  fillColor: const Color(0xFFF8FAFC),
+                  border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: const BorderSide(color: _border)),
+                ),
+              ),
+              const SizedBox(height: 20),
+              ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _accent,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14)),
+                ),
+                icon: const Icon(Icons.auto_fix_high_rounded),
+                label: const Text('Replace in Document',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                onPressed: () async {
+                  final query = findCtrl.text.trim();
+                  final replacement = replaceCtrl.text.trim();
+                  if (query.isEmpty || replacement.isEmpty) return;
+
+                  Navigator.pop(ctx);
+                  await c.findAndReplaceText(query, replacement);
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   // ── Pick and Insert Image Overlay ──────────────────────────────────────────
@@ -363,6 +633,23 @@ class _PdfEditorScreenState extends State<PdfEditorScreen>
         colorText: Colors.white,
       );
     }
+  }
+
+  /// Smallest axis-aligned rect enclosing [points], or null for < 2 points
+  /// (a tap is not a highlight).
+  static Rect? _boundingRect(List<Offset> points) {
+    if (points.length < 2) return null;
+    double minX = points.first.dx;
+    double maxX = minX;
+    double minY = points.first.dy;
+    double maxY = minY;
+    for (final p in points.skip(1)) {
+      minX = math.min(minX, p.dx);
+      maxX = math.max(maxX, p.dx);
+      minY = math.min(minY, p.dy);
+      maxY = math.max(maxY, p.dy);
+    }
+    return Rect.fromLTRB(minX, minY, maxX, maxY);
   }
 
   // ── Digital Signature Modal ────────────────────────────────────────────────
@@ -416,8 +703,6 @@ class _PdfEditorScreenState extends State<PdfEditorScreen>
                     ),
                     child: GestureDetector(
                       onPanUpdate: (details) {
-                        final RenderBox box = ctx.findRenderObject() as RenderBox;
-                        final local = box.globalToLocal(details.globalPosition);
                         setPadState(() {
                           points.add(details.localPosition);
                         });
@@ -464,10 +749,14 @@ class _PdfEditorScreenState extends State<PdfEditorScreen>
                         ),
                         onPressed: () {
                           if (points.isNotEmpty) {
-                            final validStrokes = points.where((p) => p != Offset.zero).toList();
-                            if (validStrokes.isNotEmpty) {
-                              c.addDrawingOverlay(c.currentPage.value, validStrokes, Colors.black);
-                            }
+                            c.addSignatureOverlay(
+                              pageIndex: c.currentPage.value,
+                              padPoints: List<Offset>.from(points),
+                              padSize: Size(
+                                ctx.size?.width ?? 300,
+                                ctx.size?.height ?? 200,
+                              ),
+                            );
                           }
                           Navigator.pop(ctx);
                         },
@@ -965,7 +1254,13 @@ class _PdfEditorScreenState extends State<PdfEditorScreen>
                 },
                 tooltip: 'Search Document',
               ),
-              // 2. Share icon
+              // 2. Find & Replace icon
+              IconButton(
+                icon: const Icon(Icons.find_replace_rounded, color: Colors.black87),
+                onPressed: _showFindAndReplaceDialog,
+                tooltip: 'Find & Replace Text',
+              ),
+              // 3. Share icon
               IconButton(
                 icon: const Icon(Icons.share_rounded, color: Colors.black87),
                 onPressed: _shareCurrentDocument,
@@ -1095,6 +1390,12 @@ class _PdfEditorScreenState extends State<PdfEditorScreen>
         ],
       ),
       actions: [
+        // Find & Replace button
+        IconButton(
+          icon: const Icon(Icons.find_replace_rounded, color: _accent, size: 22),
+          onPressed: _showFindAndReplaceDialog,
+          tooltip: 'Find & Replace Text',
+        ),
         // Undo button
         Obx(() => IconButton(
               icon: Icon(
@@ -1214,37 +1515,40 @@ class _PdfEditorScreenState extends State<PdfEditorScreen>
               left: 0,
               right: 0,
               child: Center(
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFEFF6FF),
-                    borderRadius: BorderRadius.circular(22),
-                    border: Border.all(
-                        color: const Color(0xFF3B82F6).withOpacity(0.3)),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.blue.withOpacity(0.12),
-                        blurRadius: 10,
-                        offset: const Offset(0, 3),
-                      )
-                    ],
-                  ),
-                  child: const Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.touch_app_rounded,
-                          size: 16, color: Color(0xFF2563EB)),
-                      SizedBox(width: 6),
-                      Text(
-                        'Tap any content to edit',
-                        style: TextStyle(
-                          color: Color(0xFF1D4ED8),
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
+                child: GestureDetector(
+                  onTap: () => _showTextEditDialog(),
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFEFF6FF),
+                      borderRadius: BorderRadius.circular(22),
+                      border: Border.all(
+                          color: const Color(0xFF3B82F6).withOpacity(0.3)),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.blue.withOpacity(0.12),
+                          blurRadius: 10,
+                          offset: const Offset(0, 3),
+                        )
+                      ],
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.touch_app_rounded,
+                            size: 16, color: Color(0xFF2563EB)),
+                        SizedBox(width: 6),
+                        Text(
+                          'Tap any content to edit',
+                          style: TextStyle(
+                            color: Color(0xFF1D4ED8),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ).animate().fadeIn(duration: 250.ms).slideY(begin: -0.2),
               ),
@@ -1369,6 +1673,8 @@ class _PdfEditorScreenState extends State<PdfEditorScreen>
               controller: _searchCtrl,
               autofocus: true,
               style: const TextStyle(fontSize: 14, color: _text),
+              textInputAction: TextInputAction.search,
+              onSubmitted: (query) => _runSearch(query),
               decoration: const InputDecoration(
                 hintText: 'Search in document...',
                 hintStyle: TextStyle(color: _subtext, fontSize: 14),
@@ -1376,9 +1682,50 @@ class _PdfEditorScreenState extends State<PdfEditorScreen>
               ),
             ),
           ),
+
+          // Result count + prev/next (only once there are results)
+          Obx(() {
+            final total = c.searchHits.length;
+            if (total == 0 && !c.isSearching.value) {
+              return const SizedBox.shrink();
+            }
+            if (c.isSearching.value) {
+              return const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              );
+            }
+            return Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  '${c.currentHitIndex.value + 1}/$total',
+                  style: const TextStyle(
+                      color: _subtext,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700),
+                ),
+                IconButton(
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(Icons.keyboard_arrow_up_rounded,
+                      size: 20, color: _subtext),
+                  onPressed: () => _gotoHit(c.previousHit()),
+                ),
+                IconButton(
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(Icons.keyboard_arrow_down_rounded,
+                      size: 20, color: _subtext),
+                  onPressed: () => _gotoHit(c.nextHit()),
+                ),
+              ],
+            );
+          }),
+
           IconButton(
             icon: const Icon(Icons.close_rounded, size: 20, color: _subtext),
             onPressed: () {
+              c.clearSearch();
               setState(() {
                 _searchCtrl.clear();
                 _isSearchOpen = false;
@@ -1388,6 +1735,32 @@ class _PdfEditorScreenState extends State<PdfEditorScreen>
         ],
       ),
     ).animate().fadeIn(duration: 200.ms).slideY(begin: -0.2);
+  }
+
+  Future<void> _runSearch(String query) async {
+    if (query.trim().isEmpty) return;
+    await c.searchPdf(query);
+    if (c.searchHits.isEmpty) {
+      Get.snackbar(
+        'No results',
+        'Nothing matched "$query" in this document.',
+        backgroundColor: Colors.black87,
+        colorText: Colors.white,
+        snackPosition: SnackPosition.TOP,
+        duration: const Duration(seconds: 2),
+      );
+      return;
+    }
+    _gotoHit(c.currentHit);
+  }
+
+  /// Jumps to the page of [hit] and highlights the matched line in the page
+  /// item, so "the result" is visible rather than only counted.
+  void _gotoHit(SearchHit? hit) {
+    if (hit == null) return;
+    c.goToPage(hit.pageIndex);
+    c.scrollToIndex(hit.pageIndex);
+    setState(() => _searchedLineByPage[hit.pageIndex] = hit.lineIndex);
   }
 
   // ── Pages Scroll List ─────────────────────────────────────────────────────
@@ -1411,7 +1784,7 @@ class _PdfEditorScreenState extends State<PdfEditorScreen>
         physics: _isDrawing
             ? const NeverScrollableScrollPhysics()
             : const BouncingScrollPhysics(),
-        cacheExtent: 150.0,
+        scrollCacheExtent: const ScrollCacheExtent.pixels(250.0),
         itemCount: c.pageCount.value,
         itemBuilder: (context, index) => _buildPageItem(index),
       ),
@@ -1452,19 +1825,56 @@ class _PdfEditorScreenState extends State<PdfEditorScreen>
               ColorFiltered(
                 colorFilter: isNight
                     ? const ColorFilter.matrix([
-                        -1.0,  0.0,  0.0, 0.0, 255.0, // red
-                         0.0, -1.0,  0.0, 0.0, 255.0, // green
-                         0.0,  0.0, -1.0, 0.0, 255.0, // blue
-                         0.0,  0.0,  0.0, 1.0,   0.0, // alpha
+                        -1.0, 0.0, 0.0, 0.0, 255.0, // red
+                        0.0, -1.0, 0.0, 0.0, 255.0, // green
+                        0.0, 0.0, -1.0, 0.0, 255.0, // blue
+                        0.0, 0.0, 0.0, 1.0, 0.0, // alpha
                       ])
                     : const ColorFilter.mode(
-                        Colors.transparent, BlendMode.dst),
+                        Colors.transparent,
+                        BlendMode.dst,
+                      ),
                 child: _LazyPageImage(
                   key: ValueKey('page_${c.pdfPath}_$index'),
                   controller: c,
                   pageIndex: index,
+                  onLaidOut: (height) => c.notifyPageHeight(height),
                 ),
               ),
+
+              // Search-hit highlight band over the matched line.
+              Builder(builder: (context) {
+                final line = _searchedLineByPage[index];
+                if (line == null || index != c.currentPage.value) {
+                  return const SizedBox.shrink();
+                }
+                return Positioned.fill(
+                  child: IgnorePointer(
+                    child: Align(
+                      alignment: Alignment.topCenter,
+                      child: FractionallySizedBox(
+                        widthFactor: 0.92,
+                        child: Container(
+                          margin: EdgeInsets.symmetric(
+                            vertical: MediaQuery.of(context).size.height *
+                                0.004 *
+                                (line + 1),
+                          ),
+                          height: 22,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFFFC107).withValues(alpha: 0.35),
+                            borderRadius: BorderRadius.circular(3),
+                            border: Border.all(
+                              color: const Color(0xFFFFB300),
+                              width: 1,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              }),
 
               // Interactive Overlays & In-place Selection Handles
               Positioned.fill(
@@ -1473,10 +1883,19 @@ class _PdfEditorScreenState extends State<PdfEditorScreen>
                   pageIndex: index,
                   isDrawing: _isDrawing && isCurrent,
                   drawColor: _drawColor,
-                  strokeWidth: _strokeWidth,
+                  strokeWidth: c.strokeWidth.value,
                   onStrokeEnd: (strokes) {
                     if (_isHighlightMode) {
-                      c.addHighlightOverlay(index, strokes.first, _drawColor);
+                      // A highlight is the bounding box of the drag, not a
+                      // fixed 180x24 strip.
+                      final real =
+                          strokes.where((p) => p != Offset.zero).toList();
+                      final rect = _boundingRect(real);
+                      if (rect != null &&
+                          rect.width > 12 &&
+                          rect.height > 8) {
+                        c.addHighlightOverlay(index, rect, _drawColor);
+                      }
                     } else {
                       c.addDrawingOverlay(index, strokes, _drawColor);
                     }
@@ -1487,6 +1906,20 @@ class _PdfEditorScreenState extends State<PdfEditorScreen>
                       _showTextEditDialog(
                           existingId: o.id, initialText: o.text);
                     }
+                  },
+                  onTapDetectedText: (pageIdx, detectedElem, pageSize) {
+                    _showTextEditDialog(
+                      pageIndex: pageIdx,
+                      initialText: detectedElem.text,
+                      detectedElement: detectedElem,
+                      pageSize: pageSize,
+                    );
+                  },
+                  onTapPageToAddText: (pageIdx, tapPos) {
+                    _showTextEditDialog(
+                      pageIndex: pageIdx,
+                      initialPosition: tapPos,
+                    );
                   },
                 ),
               ),
@@ -1595,7 +2028,7 @@ class _PdfEditorScreenState extends State<PdfEditorScreen>
     );
   }
 
-  // ── Edit Bottom Bar (3 tabs matching frame_010.jpg) ───────────────────────
+  // ── Edit Bottom Bar (4 tabs: Edit text, Insert text, Erase / Whiteout, Insert Images) ───────
   Widget _buildEditBottomBar() {
     return Container(
       decoration: BoxDecoration(
@@ -1612,42 +2045,86 @@ class _PdfEditorScreenState extends State<PdfEditorScreen>
       child: SafeArea(
         top: false,
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
           child: Obx(() {
             final activeTab = c.editSubTab.value;
-            return Row(
-              mainAxisAlignment: MainAxisAlignment.spaceAround,
-              children: [
-                // Tab 1: Edit text
-                _EditSubTabBtn(
-                  icon: Icons.edit_note_rounded,
-                  label: 'Edit text',
-                  isActive: activeTab == 0,
-                  onTap: () {
-                    c.setEditSubTab(0);
-                  },
-                ),
-                // Tab 2: Insert text
-                _EditSubTabBtn(
-                  icon: Icons.post_add_rounded,
-                  label: 'Insert text',
-                  isActive: activeTab == 1,
-                  onTap: () {
-                    c.setEditSubTab(1);
-                    _showTextEditDialog();
-                  },
-                ),
-                // Tab 3: Insert Images
-                _EditSubTabBtn(
-                  icon: Icons.add_photo_alternate_rounded,
-                  label: 'Insert Images',
-                  isActive: activeTab == 2,
-                  onTap: () {
-                    c.setEditSubTab(2);
-                    _handleInsertImage();
-                  },
-                ),
-              ],
+            return SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              physics: const BouncingScrollPhysics(),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceAround,
+                children: [
+                  // Tab 1: Edit text
+                  _EditSubTabBtn(
+                    icon: Icons.edit_note_rounded,
+                    label: 'Edit',
+                    isActive: activeTab == 0,
+                    onTap: () {
+                      c.setEditSubTab(0);
+                      final selected = c.selectedOverlay;
+                      if (selected != null && selected.type == OverlayType.text) {
+                        _showTextEditDialog(
+                          existingId: selected.id,
+                          initialText: selected.text,
+                        );
+                      } else {
+                        Get.snackbar(
+                          'Edit text',
+                          'Tap any text on the page to edit or replace it.',
+                          backgroundColor: Colors.black87,
+                          colorText: Colors.white,
+                          snackPosition: SnackPosition.TOP,
+                          duration: const Duration(seconds: 2),
+                        );
+                      }
+                    },
+                  ),
+                  const SizedBox(width: 6),
+                  // Tab 2: Insert text
+                  _EditSubTabBtn(
+                    icon: Icons.post_add_rounded,
+                    label: 'Add Text',
+                    isActive: activeTab == 1,
+                    onTap: () {
+                      c.setEditSubTab(1);
+                      _showTextEditDialog();
+                    },
+                  ),
+                  const SizedBox(width: 6),
+                  // Tab 3: Erase / Whiteout
+                  _EditSubTabBtn(
+                    icon: Icons.auto_fix_high_rounded,
+                    label: 'Whiteout',
+                    isActive: activeTab == 2,
+                    onTap: () {
+                      c.setEditSubTab(2);
+                      c.addWhiteoutOverlay(
+                        c.currentPage.value,
+                        const Rect.fromLTWH(60, 140, 160, 36),
+                      );
+                      Get.snackbar(
+                        'Whiteout Box Added',
+                        'Drag & resize the white box over any unwanted text to erase it!',
+                        backgroundColor: Colors.black87,
+                        colorText: Colors.white,
+                        snackPosition: SnackPosition.TOP,
+                        duration: const Duration(seconds: 3),
+                      );
+                    },
+                  ),
+                  const SizedBox(width: 6),
+                  // Tab 4: Insert Images
+                  _EditSubTabBtn(
+                    icon: Icons.add_photo_alternate_rounded,
+                    label: 'Add Image',
+                    isActive: activeTab == 3,
+                    onTap: () {
+                      c.setEditSubTab(3);
+                      _handleInsertImage();
+                    },
+                  ),
+                ],
+              ),
             );
           }),
         ),
@@ -1655,8 +2132,11 @@ class _PdfEditorScreenState extends State<PdfEditorScreen>
     );
   }
 
-  // ── Text Formatting Toolbar (docked when text overlay is selected - frame_020, frame_040) ───
+  // ── Text Formatting Toolbar (docked when overlay is selected) ───────────────
   Widget _buildTextFormattingToolbar(PdfOverlay overlay) {
+    final isWhiteoutOn = overlay.backgroundColor != null &&
+        overlay.backgroundColor != Colors.transparent;
+
     return Container(
       margin: const EdgeInsets.fromLTRB(12, 0, 12, 8),
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
@@ -1686,6 +2166,33 @@ class _PdfEditorScreenState extends State<PdfEditorScreen>
               tooltip: 'Bold',
             ),
             const SizedBox(width: 4),
+
+            // Italic Toggle [ I ]
+            _FormattingBtn(
+              label: 'I',
+              isActive: overlay.isItalic,
+              onTap: () => c.toggleItalic(overlay.id),
+              tooltip: 'Italic',
+            ),
+            const SizedBox(width: 4),
+
+            // Underline Toggle [ U ]
+            _FormattingBtn(
+              label: 'U',
+              isActive: overlay.isUnderline,
+              onTap: () => c.toggleUnderline(overlay.id),
+              tooltip: 'Underline',
+            ),
+            const SizedBox(width: 4),
+
+            // Whiteout background toggle [ Erase Box ]
+            _FormattingBtn(
+              label: '🔲',
+              isActive: isWhiteoutOn,
+              onTap: () => c.toggleBackgroundWhiteout(overlay.id),
+              tooltip: isWhiteoutOn ? 'Whiteout Background (ON)' : 'Whiteout Background (Cover original text)',
+            ),
+            const SizedBox(width: 6),
 
             // Font Size Decrease [ A- ]
             _FormattingBtn(
@@ -1826,6 +2333,14 @@ class _PdfEditorScreenState extends State<PdfEditorScreen>
               child: VerticalDivider(color: _border, thickness: 1.2),
             ),
 
+            // Duplicate Overlay Button
+            IconButton(
+              icon: const Icon(Icons.content_copy_rounded,
+                  size: 19, color: _accentDark),
+              onPressed: () => c.duplicateOverlay(overlay.id),
+              tooltip: 'Duplicate',
+            ),
+
             // Keyboard Edit Text Dialog Button
             IconButton(
               icon: const Icon(Icons.keyboard_rounded,
@@ -1889,10 +2404,41 @@ class _PdfEditorScreenState extends State<PdfEditorScreen>
               setState(() {
                 _isDrawing = true;
                 _isHighlightMode = true;
-                _drawColor = const Color(0xFFFFD166).withOpacity(0.5);
+                _drawColor = const Color(0xFFFFD166).withValues(alpha: 0.5);
               });
             },
             tooltip: 'Highlighter',
+          ),
+          // Pen thickness
+          PopupMenuButton<double>(
+            tooltip: 'Pen thickness',
+            initialValue: c.strokeWidth.value,
+            onSelected: (w) => c.strokeWidth.value = w,
+            shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14)),
+            itemBuilder: (ctx) => const [
+              PopupMenuItem(value: 2.0, child: Text('Thin')),
+              PopupMenuItem(value: 3.0, child: Text('Medium')),
+              PopupMenuItem(value: 5.0, child: Text('Thick')),
+            ],
+            child: Container(
+              width: 26,
+              height: 26,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: const Color(0xFFF1F5F9),
+                shape: BoxShape.circle,
+                border: Border.all(color: _border),
+              ),
+              child: Container(
+                width: c.strokeWidth.value,
+                height: c.strokeWidth.value,
+                decoration: const BoxDecoration(
+                  color: Color(0xFF64748B),
+                  shape: BoxShape.circle,
+                ),
+              ),
+            ),
           ),
           // Color selector
           PopupMenuButton<Color>(
@@ -2021,8 +2567,7 @@ class _PdfEditorScreenState extends State<PdfEditorScreen>
           pageIndex: index,
           onTap: () {
             c.goToPage(index);
-            final pageH = MediaQuery.of(context).size.height * .85;
-            c.scrollToPage(index, pageH);
+            c.scrollToIndex(index);
           },
         ),
       ),
@@ -2039,6 +2584,8 @@ class _InteractivePageOverlayLayer extends StatefulWidget {
   final double strokeWidth;
   final void Function(List<Offset>) onStrokeEnd;
   final void Function(PdfOverlay) onTapEditOverlay;
+  final void Function(int pageIndex, Offset tapPos)? onTapPageToAddText;
+  final void Function(int pageIndex, PdfDetectedTextElement detectedElem, Size pageSize)? onTapDetectedText;
 
   const _InteractivePageOverlayLayer({
     required this.controller,
@@ -2048,6 +2595,8 @@ class _InteractivePageOverlayLayer extends StatefulWidget {
     required this.strokeWidth,
     required this.onStrokeEnd,
     required this.onTapEditOverlay,
+    this.onTapPageToAddText,
+    this.onTapDetectedText,
   });
 
   @override
@@ -2073,8 +2622,85 @@ class _InteractivePageOverlayLayerState
           return const SizedBox.shrink();
         }
 
+        final pageSize = Size(w, h);
+
         return Stack(
           children: [
+            // 1. Page Tap Listener for Edit Mode: background tap fallback
+            if (isEditMode && !widget.isDrawing)
+              Positioned.fill(
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTapUp: (details) async {
+                    if (widget.controller.selectedOverlayId.value != null) {
+                      widget.controller.selectOverlay(null);
+                      return;
+                    }
+
+                    // Check if user tapped a recognized word/line in the PDF
+                    var match = widget.controller.findDetectedTextAtPosition(
+                      pageIndex: widget.pageIndex,
+                      tapPos: details.localPosition,
+                      pageSize: pageSize,
+                    );
+
+                    if (match != null) {
+                      widget.onTapDetectedText?.call(widget.pageIndex, match, pageSize);
+                      return;
+                    }
+
+                    // If text was not yet detected on this page, run detection on demand
+                    if (!widget.controller.detectedPageTexts.containsKey(widget.pageIndex)) {
+                      final list = await widget.controller.detectTextOnPage(widget.pageIndex);
+                      if (list.isNotEmpty) {
+                        match = widget.controller.findDetectedTextAtPosition(
+                          pageIndex: widget.pageIndex,
+                          tapPos: details.localPosition,
+                          pageSize: pageSize,
+                        );
+                        if (match != null) {
+                          widget.onTapDetectedText?.call(widget.pageIndex, match, pageSize);
+                          return;
+                        }
+                      }
+                    }
+
+                    // Fallback: tap anywhere to insert new text
+                    widget.onTapPageToAddText?.call(widget.pageIndex, details.localPosition);
+                  },
+                ),
+              ),
+
+            // 2. Visual outline hints & direct tap handlers for detected original PDF words in Edit Mode
+            if (isEditMode && !widget.isDrawing) ...[
+              ...((widget.controller.detectedPageTexts[widget.pageIndex] ?? const [])
+                  .map((elem) {
+                final r = elem.getScaledRect(pageSize);
+                return Positioned(
+                  left: r.left - 2,
+                  top: r.top - 2,
+                  width: math.max(26.0, r.width + 4),
+                  height: math.max(16.0, r.height + 4),
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () {
+                      widget.onTapDetectedText?.call(widget.pageIndex, elem, pageSize);
+                    },
+                    child: Container(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(3),
+                        border: Border.all(
+                          color: const Color(0xFF3B82F6).withValues(alpha: 0.6),
+                          width: 1.2,
+                        ),
+                        color: const Color(0xFF3B82F6).withValues(alpha: 0.12),
+                      ),
+                    ),
+                  ),
+                );
+              })),
+            ],
+
             // Static / Drawn overlays painter
             CustomPaint(
               size: Size(w, h),
@@ -2086,6 +2712,7 @@ class _InteractivePageOverlayLayerState
                     .toList(),
                 liveStrokes: _liveStrokes,
                 liveColor: widget.drawColor,
+                liveWidth: widget.strokeWidth,
               ),
             ),
 
@@ -2309,15 +2936,31 @@ class _MovableOverlayWidgetState extends State<_MovableOverlayWidget> {
 
   Widget _buildContent() {
     if (widget.overlay.type == OverlayType.text) {
-      return Text(
-        widget.overlay.text ?? '',
-        textAlign: widget.overlay.textAlign,
-        style: TextStyle(
-          color: widget.overlay.color,
-          fontSize: widget.overlay.fontSize,
-          fontWeight: widget.overlay.isBold ? FontWeight.bold : FontWeight.w500,
-          fontFamily: widget.overlay.fontFamily,
-          shadows: const [Shadow(color: Colors.white70, blurRadius: 2)],
+      final isWhiteout = widget.overlay.backgroundColor != null &&
+          widget.overlay.backgroundColor != Colors.transparent;
+
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+        decoration: BoxDecoration(
+          color: widget.overlay.backgroundColor ?? Colors.transparent,
+          borderRadius: isWhiteout ? BorderRadius.circular(2) : null,
+        ),
+        child: Text(
+          widget.overlay.text ?? '',
+          textAlign: widget.overlay.textAlign,
+          style: TextStyle(
+            color: widget.overlay.color,
+            fontSize: widget.overlay.fontSize,
+            fontWeight: widget.overlay.isBold ? FontWeight.bold : FontWeight.w500,
+            fontStyle: widget.overlay.isItalic ? FontStyle.italic : FontStyle.normal,
+            decoration: widget.overlay.isUnderline
+                ? TextDecoration.underline
+                : TextDecoration.none,
+            fontFamily: widget.overlay.fontFamily,
+            shadows: isWhiteout
+                ? null
+                : const [Shadow(color: Colors.white70, blurRadius: 2)],
+          ),
         ),
       );
     } else if (widget.overlay.type == OverlayType.image &&
@@ -2327,6 +2970,12 @@ class _MovableOverlayWidgetState extends State<_MovableOverlayWidget> {
         fit: BoxFit.contain,
         width: _size.width,
         height: _size.height,
+      );
+    } else if (widget.overlay.type == OverlayType.signature &&
+        widget.overlay.strokes != null) {
+      return CustomPaint(
+        size: _size,
+        painter: _SignaturePadPainter(points: widget.overlay.strokes!),
       );
     }
     return const SizedBox.shrink();
@@ -2357,10 +3006,16 @@ class _OverlayPainter extends CustomPainter {
   final List<Offset> liveStrokes;
   final Color liveColor;
 
+  /// Width used for the in-progress stroke and for saved strokes whose own
+  /// width wasn't recorded (older pages). Saved strokes drawn with the stored
+  /// per-stroke width keep their look across sessions.
+  final double liveWidth;
+
   const _OverlayPainter({
     required this.overlays,
     required this.liveStrokes,
     required this.liveColor,
+    this.liveWidth = 3.0,
   });
 
   @override
@@ -2372,7 +3027,8 @@ class _OverlayPainter extends CustomPainter {
           break;
         case OverlayType.drawing:
           if (o.strokes != null && o.strokes!.length > 1) {
-            _drawStrokes(canvas, o.strokes!, o.color);
+            _drawStrokes(canvas, o.strokes!, o.color,
+                strokeWidth: o.size.width > 0 ? o.size.width : liveWidth);
           }
           break;
         default:
@@ -2380,21 +3036,23 @@ class _OverlayPainter extends CustomPainter {
       }
     }
     if (liveStrokes.length > 1) {
-      _drawStrokes(canvas, liveStrokes, liveColor);
+      _drawStrokes(canvas, liveStrokes, liveColor, strokeWidth: liveWidth);
     }
   }
 
   void _drawHighlight(Canvas canvas, PdfOverlay o) {
     canvas.drawRect(
-      Rect.fromLTWH(o.position.dx, o.position.dy, 180, 24),
+      Rect.fromLTWH(
+          o.position.dx, o.position.dy, o.size.width, o.size.height),
       Paint()..color = o.color,
     );
   }
 
-  void _drawStrokes(Canvas canvas, List<Offset> pts, Color color) {
+  void _drawStrokes(Canvas canvas, List<Offset> pts, Color color,
+      {required double strokeWidth}) {
     final paint = Paint()
       ..color = color
-      ..strokeWidth = 3.5
+      ..strokeWidth = strokeWidth
       ..strokeCap = StrokeCap.round
       ..style = PaintingStyle.stroke;
     final path = Path()..moveTo(pts.first.dx, pts.first.dy);
@@ -2412,17 +3070,24 @@ class _OverlayPainter extends CustomPainter {
   bool shouldRepaint(_OverlayPainter old) =>
       old.overlays != overlays ||
       old.liveStrokes != liveStrokes ||
-      old.liveColor != liveColor;
+      old.liveColor != liveColor ||
+      old.liveWidth != liveWidth;
 }
 
 // ── Lazy Page Image (Stateful + AutomaticKeepAliveClientMixin) ───────────────
 class _LazyPageImage extends StatefulWidget {
   final PdfEditorController controller;
   final int pageIndex;
+
+  /// Called with the image's rendered height once known, so the scroll math
+  /// can use real page extents instead of a screen-size guess.
+  final ValueChanged<double>? onLaidOut;
+
   const _LazyPageImage({
     super.key,
     required this.controller,
     required this.pageIndex,
+    this.onLaidOut,
   });
 
   @override
@@ -2507,12 +3172,28 @@ class _LazyPageImageState extends State<_LazyPageImage> {
         }
 
         final img = snap.data!;
+        final imgW = img.width ?? 0;
+        final imgH = img.height ?? 0;
         return Container(
           color: Colors.white,
-          child: Image.memory(
-            img.bytes,
-            fit: BoxFit.contain,
-            width: double.infinity,
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              // Rows fit image aspect: rendered height = width * (h/w).
+              final w = constraints.maxWidth;
+              if (w.isFinite &&
+                  imgW > 0 &&
+                  imgH > 0 &&
+                  widget.onLaidOut != null) {
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  widget.onLaidOut!(w * imgH / imgW);
+                });
+              }
+              return Image.memory(
+                img.bytes,
+                fit: BoxFit.contain,
+                width: double.infinity,
+              );
+            },
           ),
         );
       },

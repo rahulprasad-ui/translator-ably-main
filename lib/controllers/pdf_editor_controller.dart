@@ -15,19 +15,50 @@ import 'dart:async';
 import 'dart:collection';
 import 'dart:developer';
 import 'dart:io';
-import 'dart:isolate';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart' show compute;
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:pdfx/pdfx.dart';
+import 'package:read_pdf_text/read_pdf_text.dart';
+
+import '../services/pdf_export_isolate.dart';
 
 // ── Editor Modes & Overlay models ─────────────────────────────────────────────
 enum EditorMode { view, edit, annotate, sign, fillOut }
 
 enum OverlayType { text, drawing, highlight, signature, image, formField }
+
+class PdfDetectedTextElement {
+  final String text;
+  final Rect boundingBox;
+  final double imageWidth;
+  final double imageHeight;
+
+  PdfDetectedTextElement({
+    required this.text,
+    required this.boundingBox,
+    required this.imageWidth,
+    required this.imageHeight,
+  });
+
+  Rect getScaledRect(Size targetSize) {
+    if (imageWidth <= 0 || imageHeight <= 0) return boundingBox;
+    final scaleX = targetSize.width / imageWidth;
+    final scaleY = targetSize.height / imageHeight;
+    return Rect.fromLTRB(
+      boundingBox.left * scaleX,
+      boundingBox.top * scaleY,
+      boundingBox.right * scaleX,
+      boundingBox.bottom * scaleY,
+    );
+  }
+}
 
 class PdfOverlay {
   final String id;
@@ -37,8 +68,11 @@ class PdfOverlay {
   Size size;
   String? text;
   Color color;
+  Color? backgroundColor;
   double fontSize;
   bool isBold;
+  bool isItalic;
+  bool isUnderline;
   TextAlign textAlign;
   String fontFamily;
   List<Offset>? strokes;
@@ -53,8 +87,11 @@ class PdfOverlay {
     this.size = const Size(180, 50),
     this.text,
     this.color = Colors.black,
+    this.backgroundColor = Colors.transparent,
     this.fontSize = 15,
     this.isBold = false,
+    this.isItalic = false,
+    this.isUnderline = false,
     this.textAlign = TextAlign.left,
     this.fontFamily = 'Roboto',
     this.strokes,
@@ -70,8 +107,11 @@ class PdfOverlay {
     Size? size,
     String? text,
     Color? color,
+    Color? backgroundColor,
     double? fontSize,
     bool? isBold,
+    bool? isItalic,
+    bool? isUnderline,
     TextAlign? textAlign,
     String? fontFamily,
     List<Offset>? strokes,
@@ -86,8 +126,11 @@ class PdfOverlay {
       size: size ?? this.size,
       text: text ?? this.text,
       color: color ?? this.color,
+      backgroundColor: backgroundColor ?? this.backgroundColor,
       fontSize: fontSize ?? this.fontSize,
       isBold: isBold ?? this.isBold,
+      isItalic: isItalic ?? this.isItalic,
+      isUnderline: isUnderline ?? this.isUnderline,
       textAlign: textAlign ?? this.textAlign,
       fontFamily: fontFamily ?? this.fontFamily,
       strokes: strokes ?? (this.strokes != null ? List.from(this.strokes!) : null),
@@ -97,7 +140,25 @@ class PdfOverlay {
   }
 }
 
-// ── LRU cache ─────────────────────────────────────────────────────────────────
+// ── LRU cache ────────────────────────────────────────────────────────────────
+/// One search hit located in the extracted document text.
+class SearchHit {
+  const SearchHit({required this.pageIndex, required this.lineIndex});
+
+  final int pageIndex;
+  final int lineIndex;
+
+  @override
+  bool operator ==(Object other) =>
+      other is SearchHit &&
+      other.pageIndex == pageIndex &&
+      other.lineIndex == lineIndex;
+
+  @override
+  int get hashCode => Object.hash(pageIndex, lineIndex);
+}
+
+// ── LRU cache ────────────────────────────────────────────────────────────────
 class _LruCache<K, V> {
   final int capacity;
   final void Function(V)? onEvict;
@@ -157,7 +218,155 @@ class _AsyncLock {
 
 // ── Controller ────────────────────────────────────────────────────────────────
 class PdfEditorController extends GetxController {
-  // ── Observables ────────────────────────────────────────────────────────────
+  // ── Search state ───────────────────────────────────────────────────────
+
+  /// One search hit: which page, and which text line on it.
+  final searchHits = <SearchHit>[].obs;
+  final searchQuery = ''.obs;
+  final currentHitIndex = (-1).obs;
+  final isSearching = false.obs;
+
+  List<String>? _pdfTextCache;
+
+  void clearSearch() {
+    searchHits.clear();
+    searchQuery.value = '';
+    currentHitIndex.value = -1;
+  }
+
+  /// Extracts the PDF's text once (per open document) and scans it for every
+  /// case-insensitive occurrence of [query]. `read_pdf_text` returns text
+  /// paginated by page.
+  Future<void> searchPdf(String query) async {
+    final path = pdfPath;
+    if (path == null || query.trim().isEmpty) return;
+
+    isSearching.value = true;
+    searchQuery.value = query;
+    try {
+      _pdfTextCache ??= await ReadPdfText.getPDFtextPaginated(path);
+      final pages = _pdfTextCache ?? const <String>[];
+
+      final needle = query.trim().toLowerCase();
+      final hits = <SearchHit>[];
+      for (var i = 0; i < pages.length; i++) {
+        final lines = pages[i].split('\n');
+        for (var line = 0; line < lines.length; line++) {
+          final hay = lines[line].toLowerCase();
+          var from = 0;
+          while (true) {
+            final at = hay.indexOf(needle, from);
+            if (at < 0) break;
+            hits.add(SearchHit(pageIndex: i, lineIndex: line));
+            from = at + needle.length;
+            if (hits.length >= 200) break; // safety cap for pathological docs
+          }
+          if (hits.length >= 200) break;
+        }
+        if (hits.length >= 200) break;
+      }
+
+      searchHits.assignAll(hits);
+      currentHitIndex.value = hits.isEmpty ? -1 : 0;
+    } catch (e) {
+      log('[PdfEditor] searchPdf: $e');
+      searchHits.assignAll(const <SearchHit>[]);
+      currentHitIndex.value = -1;
+    } finally {
+      isSearching.value = false;
+    }
+  }
+
+  Future<int> findAndReplaceText(String findQuery, String replaceText) async {
+    final path = pdfPath;
+    if (path == null || findQuery.trim().isEmpty) return 0;
+
+    isSearching.value = true;
+    try {
+      _pdfTextCache ??= await ReadPdfText.getPDFtextPaginated(path);
+      final pages = _pdfTextCache ?? const <String>[];
+      final needle = findQuery.trim().toLowerCase();
+      int count = 0;
+
+      for (var i = 0; i < pages.length; i++) {
+        final lines = pages[i].split('\n');
+        for (var lineIdx = 0; lineIdx < lines.length; lineIdx++) {
+          final lineContent = lines[lineIdx];
+          if (lineContent.toLowerCase().contains(needle)) {
+            final totalLines = math.max(1, lines.length);
+            final pageH = _lastKnownPageHeight ?? 750.0;
+            final approxY = (lineIdx / totalLines) * (pageH * 0.88) + 36.0;
+
+            recordHistory();
+            final newId = 'replace_${DateTime.now().millisecondsSinceEpoch}_$count';
+            final overlay = PdfOverlay(
+              id: newId,
+              pageIndex: i,
+              type: OverlayType.text,
+              position: Offset(40, approxY),
+              size: Size(math.max(200.0, replaceText.length * 11.0 + 24.0), 38),
+              text: replaceText,
+              color: Colors.black87,
+              backgroundColor: Colors.white,
+              fontSize: 15,
+            );
+            overlays.add(overlay);
+            selectedOverlayId.value = newId;
+            count++;
+          }
+        }
+      }
+
+      if (count > 0) {
+        setEditorMode(EditorMode.edit);
+        Get.snackbar(
+          'Replaced Successfully',
+          'Found and replaced $count instance(s) of "$findQuery" with "$replaceText". Drag handles to fine-tune placement.',
+          backgroundColor: const Color(0xFF10B981).withValues(alpha: 0.95),
+          colorText: Colors.white,
+          snackPosition: SnackPosition.TOP,
+          duration: const Duration(seconds: 4),
+        );
+      } else {
+        Get.snackbar(
+          'Not Found',
+          'Could not find "$findQuery" in this document.',
+          backgroundColor: Colors.black87,
+          colorText: Colors.white,
+          snackPosition: SnackPosition.TOP,
+        );
+      }
+      return count;
+    } catch (e) {
+      log('[PdfEditor] findAndReplaceText error: $e');
+      return 0;
+    } finally {
+      isSearching.value = false;
+    }
+  }
+
+  SearchHit? get currentHit =>
+      (currentHitIndex.value >= 0 && currentHitIndex.value < searchHits.length)
+          ? searchHits[currentHitIndex.value]
+          : null;
+
+  SearchHit? nextHit() {
+    if (searchHits.isEmpty) return null;
+    currentHitIndex.value = (currentHitIndex.value + 1) % searchHits.length;
+    return currentHit;
+  }
+
+  SearchHit? previousHit() {
+    if (searchHits.isEmpty) return null;
+    currentHitIndex.value =
+        (currentHitIndex.value - 1 + searchHits.length) % searchHits.length;
+    return currentHit;
+  }
+
+  // ── Annotation settings ────────────────────────────────────────────────
+  final strokeWidth = 3.0.obs;
+
+  // ── Observables ────────────────────────────────────────────────────────
   final isLoading = false.obs;
   final hasError = false.obs;
   final pageCount = 0.obs;
@@ -214,9 +423,113 @@ class PdfEditorController extends GetxController {
     scrollController = ScrollController();
   }
 
+  // ── Document Text Detection (for tap-to-edit existing PDF text) ───────────
+  final detectedPageTexts = <int, List<PdfDetectedTextElement>>{}.obs;
+  final isDetectingText = false.obs;
+  TextRecognizer? _textRecognizer;
+
+  TextRecognizer _getTextRecognizer() {
+    _textRecognizer ??= TextRecognizer(script: TextRecognitionScript.latin);
+    return _textRecognizer!;
+  }
+
+  Future<List<PdfDetectedTextElement>> detectTextOnPage(int pageIndex) async {
+    if (detectedPageTexts.containsKey(pageIndex)) {
+      return detectedPageTexts[pageIndex]!;
+    }
+    if (_document == null) return [];
+
+    try {
+      isDetectingText.value = true;
+      final pageImage = await getPageImage(pageIndex);
+      if (pageImage == null || pageImage.bytes.isEmpty) return [];
+
+      final tempDir = await getTemporaryDirectory();
+      final tempFile = File('${tempDir.path}/ocr_detect_${pageIndex}_${DateTime.now().millisecondsSinceEpoch}.jpg');
+      await tempFile.writeAsBytes(pageImage.bytes);
+
+      final inputImage = InputImage.fromFilePath(tempFile.path);
+      final recognized = await _getTextRecognizer().processImage(inputImage);
+
+      try {
+        await tempFile.delete();
+      } catch (_) {}
+
+      final List<PdfDetectedTextElement> elements = [];
+      final imgW = (pageImage.width ?? 1080).toDouble();
+      final imgH = (pageImage.height ?? 1920).toDouble();
+
+      for (final block in recognized.blocks) {
+        for (final line in block.lines) {
+          for (final elem in line.elements) {
+            final t = elem.text.trim();
+            if (t.isNotEmpty) {
+              elements.add(PdfDetectedTextElement(
+                text: t,
+                boundingBox: elem.boundingBox,
+                imageWidth: imgW,
+                imageHeight: imgH,
+              ));
+            }
+          }
+          if (line.elements.length > 1) {
+            final lineText = line.text.trim();
+            if (lineText.isNotEmpty) {
+              elements.add(PdfDetectedTextElement(
+                text: lineText,
+                boundingBox: line.boundingBox,
+                imageWidth: imgW,
+                imageHeight: imgH,
+              ));
+            }
+          }
+        }
+      }
+
+      detectedPageTexts[pageIndex] = elements;
+      detectedPageTexts.refresh();
+      return elements;
+    } catch (e) {
+      log('[PdfEditor] detectTextOnPage error: $e');
+      return [];
+    } finally {
+      isDetectingText.value = false;
+    }
+  }
+
+  PdfDetectedTextElement? findDetectedTextAtPosition({
+    required int pageIndex,
+    required Offset tapPos,
+    required Size pageSize,
+  }) {
+    final list = detectedPageTexts[pageIndex];
+    if (list == null || list.isEmpty) return null;
+
+    PdfDetectedTextElement? bestMatch;
+    double minArea = double.infinity;
+
+    for (final elem in list) {
+      final scaled = elem.getScaledRect(pageSize);
+      final hitRect = scaled.inflate(8.0);
+      if (hitRect.contains(tapPos)) {
+        final area = scaled.width * scaled.height;
+        if (area < minArea) {
+          minArea = area;
+          bestMatch = elem;
+        }
+      }
+    }
+
+    return bestMatch;
+  }
+
   @override
   void onClose() {
     _closeDocument();
+    try {
+      _textRecognizer?.close();
+      _textRecognizer = null;
+    } catch (_) {}
     scrollController?.dispose();
     scrollController = null;
     super.onClose();
@@ -225,6 +538,7 @@ class PdfEditorController extends GetxController {
   void _closeDocument() {
     _pageCache.clear();
     _thumbCache.clear();
+    detectedPageTexts.clear();
     try {
       _document?.close();
     } catch (_) {}
@@ -256,6 +570,8 @@ class PdfEditorController extends GetxController {
       thumbnailReadyPages.clear();
 
       pdfPath = path;
+      _pdfTextCache = null; // fresh text for the newly opened document
+      clearSearch();
       _document = await PdfDocument.openFile(path);
       pageCount.value = _document!.pagesCount;
       currentPage.value = 0;
@@ -374,6 +690,8 @@ class PdfEditorController extends GetxController {
     editorMode.value = mode;
     if (mode != EditorMode.edit) {
       selectedOverlayId.value = null;
+    } else {
+      detectTextOnPage(currentPage.value);
     }
   }
 
@@ -418,6 +736,44 @@ class PdfEditorController extends GetxController {
     selectedOverlayId.value = newId;
   }
 
+  PdfOverlay replaceDetectedText({
+    required int pageIndex,
+    required PdfDetectedTextElement element,
+    required Size pageSize,
+    required String newText,
+    Color color = Colors.black87,
+    String fontFamily = 'Roboto',
+    bool isBold = false,
+  }) {
+    recordHistory();
+    final scaled = element.getScaledRect(pageSize);
+    final newId = 'replace_${element.text.hashCode}_$pageIndex';
+
+    overlays.removeWhere((o) => o.id == newId);
+
+    final estimatedFontSize = (scaled.height * 0.78).clamp(10.0, 48.0);
+    final charRatio = newText.length / math.max(1, element.text.length);
+    final estimatedWidth = math.max(scaled.width * charRatio + 16, scaled.width + 12);
+
+    final overlay = PdfOverlay(
+      id: newId,
+      pageIndex: pageIndex,
+      type: OverlayType.text,
+      position: Offset(scaled.left - 2, scaled.top - 2),
+      size: Size(estimatedWidth, scaled.height + 4),
+      text: newText,
+      color: color,
+      backgroundColor: Colors.white,
+      fontSize: estimatedFontSize,
+      fontFamily: fontFamily,
+      isBold: isBold,
+    );
+
+    overlays.add(overlay);
+    selectedOverlayId.value = newId;
+    return overlay;
+  }
+
   void addImageOverlay(
     int pageIndex,
     Offset position,
@@ -438,13 +794,18 @@ class PdfEditorController extends GetxController {
     selectedOverlayId.value = newId;
   }
 
-  void addHighlightOverlay(int pageIndex, Offset position, Color color) {
+  void addHighlightOverlay(
+    int pageIndex,
+    Rect rect,
+    Color color,
+  ) {
     recordHistory();
     overlays.add(PdfOverlay(
       id: 'hl_${DateTime.now().millisecondsSinceEpoch}',
       pageIndex: pageIndex,
       type: OverlayType.highlight,
-      position: position,
+      position: rect.topLeft,
+      size: rect.size,
       color: color,
     ));
   }
@@ -458,6 +819,7 @@ class PdfEditorController extends GetxController {
       position: strokes.isNotEmpty ? strokes.first : Offset.zero,
       strokes: strokes,
       color: color,
+      size: Size(strokeWidth.value, strokeWidth.value),
     ));
   }
 
@@ -545,11 +907,119 @@ class PdfEditorController extends GetxController {
     }
   }
 
+  void toggleItalic(String id) {
+    final idx = overlays.indexWhere((o) => o.id == id);
+    if (idx != -1) {
+      recordHistory();
+      overlays[idx].isItalic = !overlays[idx].isItalic;
+      overlays.refresh();
+    }
+  }
+
+  void toggleUnderline(String id) {
+    final idx = overlays.indexWhere((o) => o.id == id);
+    if (idx != -1) {
+      recordHistory();
+      overlays[idx].isUnderline = !overlays[idx].isUnderline;
+      overlays.refresh();
+    }
+  }
+
+  void toggleBackgroundWhiteout(String id) {
+    final idx = overlays.indexWhere((o) => o.id == id);
+    if (idx != -1) {
+      recordHistory();
+      if (overlays[idx].backgroundColor == null ||
+          overlays[idx].backgroundColor == Colors.transparent) {
+        overlays[idx].backgroundColor = Colors.white;
+      } else {
+        overlays[idx].backgroundColor = Colors.transparent;
+      }
+      overlays.refresh();
+    }
+  }
+
+  void duplicateOverlay(String id) {
+    final item = overlays.firstWhereOrNull((o) => o.id == id);
+    if (item == null) return;
+    recordHistory();
+    final duplicated = item.copyWith(
+      id: '${item.type.name}_${DateTime.now().microsecondsSinceEpoch}',
+      position: Offset(item.position.dx + 20, item.position.dy + 20),
+    );
+    overlays.add(duplicated);
+    selectedOverlayId.value = duplicated.id;
+  }
+
+  void addWhiteoutOverlay(int pageIndex, Rect rect) {
+    recordHistory();
+    final newId = 'wo_${DateTime.now().millisecondsSinceEpoch}';
+    overlays.add(PdfOverlay(
+      id: newId,
+      pageIndex: pageIndex,
+      type: OverlayType.highlight,
+      position: rect.topLeft,
+      size: rect.size,
+      color: Colors.white,
+    ));
+    selectedOverlayId.value = newId;
+  }
+
+  /// Adds a signature from the drawn pad. Coordinates arrive in *pad* space,
+  /// so they're normalized to the pad size and remapped into *page* space at a
+  /// default width — placing it roughly where it was drawn. The user then
+  /// drags/resizes it like any other overlay.
+  void addSignatureOverlay({
+    required int pageIndex,
+    required List<Offset> padPoints,
+    required Size padSize,
+    Color color = Colors.indigo,
+  }) {
+    final real = padPoints.where((p) => p != Offset.zero).toList();
+    if (real.isEmpty || padSize.isEmpty) return;
+
+    double minX = real.first.dx, maxX = minX, minY = real.first.dy, maxY = minY;
+    for (final p in real.skip(1)) {
+      minX = math.min(minX, p.dx);
+      maxX = math.max(maxX, p.dx);
+      minY = math.min(minY, p.dy);
+      maxY = math.max(maxY, p.dy);
+    }
+    if (maxX <= minX || maxY <= minY) return;
+
+    // Center the ink block where it was drawn in the pad, scaled to a
+    // reasonable page size.
+    const defaultWidth = 180.0;
+    final inkW = maxX - minX;
+    final inkH = maxY - minY;
+    final scale = defaultWidth / inkW;
+
+    // Keep strokes local to the ink bounds; Offset.zero stays the separator.
+    final strokes = <Offset>[
+      for (final p in padPoints)
+        p == Offset.zero
+            ? Offset.zero
+            : Offset(p.dx - minX, p.dy - minY),
+    ];
+
+    recordHistory();
+    final newId = 'sig_${DateTime.now().millisecondsSinceEpoch}';
+    overlays.add(PdfOverlay(
+      id: newId,
+      pageIndex: pageIndex,
+      type: OverlayType.signature,
+      position: Offset(minX, minY),
+      size: Size(defaultWidth, inkH * scale),
+      strokes: strokes,
+      color: color,
+    ));
+    selectedOverlayId.value = newId;
+  }
+
   List<PdfOverlay> overlaysForPage(int pageIndex) =>
       overlays.where((o) => o.pageIndex == pageIndex).toList();
 
-  // ── Export (Isolate) ───────────────────────────────────────────────────────
-  /// Bakes overlays into PDF in a separate Isolate so UI stays smooth.
+  // ── Export ─────────────────────────────────────────────────────────────────
   Future<String?> exportWithOverlays() async {
     if (pdfPath == null) return null;
     isSaving.value = true;
@@ -560,23 +1030,17 @@ class PdfEditorController extends GetxController {
           '${tmpDir.path}/edited_${DateTime.now().millisecondsSinceEpoch}.pdf';
 
       final overlayData = overlays
-          .map((o) => {
-                'id': o.id,
-                'pageIndex': o.pageIndex,
-                'type': o.type.index,
-                'x': o.position.dx,
-                'y': o.position.dy,
-                'text': o.text ?? '',
-                'color': o.color.toARGB32(),
-                'fontSize': o.fontSize,
-              })
+          .map(_encodeOverlay)
           .toList();
 
-      final result = await _runInIsolate<String?>(_exportIsolateEntry, {
-        'sourcePath': pdfPath!,
-        'outPath': outPath,
-        'overlays': overlayData,
-      });
+      final result = await compute(
+        _exportJob,
+        ExportJobInput(
+          sourcePath: pdfPath!,
+          outPath: outPath,
+          overlays: overlayData,
+        ),
+      );
 
       return result;
     } catch (e) {
@@ -587,34 +1051,33 @@ class PdfEditorController extends GetxController {
     }
   }
 
-  Future<T> _runInIsolate<T>(
-    void Function(List<dynamic>) entry,
-    dynamic message,
-  ) async {
-    final completer = Completer<T>();
-    final receivePort = ReceivePort();
-    await Isolate.spawn(entry, [receivePort.sendPort, message]);
-    receivePort.listen((msg) {
-      if (!completer.isCompleted) completer.complete(msg as T);
-      receivePort.close();
-    });
-    return completer.future;
+  Map<String, Object> _encodeOverlay(PdfOverlay o) {
+    return {
+      'id': o.id,
+      'pageIndex': o.pageIndex,
+      'type': o.type.index,
+      'x': o.position.dx,
+      'y': o.position.dy,
+      'w': o.size.width,
+      'h': o.size.height,
+      'text': o.text ?? '',
+      'colorValue': o.color.toARGB32(),
+      'backgroundColorValue': o.backgroundColor?.toARGB32() ?? 0,
+      'fontSize': o.fontSize,
+      'isBold': o.isBold,
+      'isItalic': o.isItalic,
+      'isUnderline': o.isUnderline,
+      'textAlignIndex': o.textAlign.index,
+      'fontFamily': o.fontFamily,
+      if (o.imageBytes != null) 'imageBytes': o.imageBytes!,
+      if (o.imagePath != null) 'imagePath': o.imagePath!,
+      'strokes': [for (final p in o.strokes ?? const <Offset>[]) [p.dx, p.dy]],
+    };
   }
 
-  static void _exportIsolateEntry(List<dynamic> args) {
-    final sendPort = args[0] as SendPort;
-    final data = args[1] as Map<String, dynamic>;
-    try {
-      final src = File(data['sourcePath'] as String);
-      final out = data['outPath'] as String;
-      // Copies source PDF then overlays would be baked by a native PDF engine.
-      // Production: use pdfx canvas API or a C-FFI plugin here.
-      src.copySync(out);
-      sendPort.send(out);
-    } catch (_) {
-      sendPort.send(null);
-    }
-  }
+  /// Template method so [_exportJob] has a compile-time-known target.
+  static Future<String?> _exportJob(ExportJobInput input) =>
+      ExportIsolate.run(input);
 
   // ── Navigation ─────────────────────────────────────────────────────────────
   void goToPage(int index) {
@@ -623,19 +1086,30 @@ class PdfEditorController extends GetxController {
     currentPage.value = index;
   }
 
-  void scrollToPage(int index, double pageHeight) {
-    if (scrollController?.hasClients == true) {
-      final target = (index * (pageHeight + 16)).clamp(
-        0.0,
-        scrollController!.position.maxScrollExtent,
-      );
-      scrollController!.animateTo(
-        target,
-        duration: const Duration(milliseconds: 350),
-        curve: Curves.easeInOut,
-      );
-    }
+  /// Scrolls the page list to [index]. Uses `Scrollable.ensureVisible`-style
+  /// math against real item heights instead of assuming every page is a fixed
+  /// fraction of the screen — A4 and landscape pages scroll differently.
+  void scrollToIndex(int index) {
+    final controller = scrollController;
+    if (controller == null || !controller.hasClients) return;
+
+    // Item height = maxCrossAxisExtent-based page render width. Pages render
+    // image-width constrained, so height ≈ width / aspect; but the pragmatic
+    // fix is: scroll to the item extent reported by the layout itself.
+    final pos = controller.position;
+    final viewportHeight = pos.viewportDimension;
+    final pageH = _lastKnownPageHeight ?? viewportHeight * 0.9;
+    final target = (index * (pageH + 16)).clamp(0.0, pos.maxScrollExtent);
+    controller.animateTo(
+      target,
+      duration: const Duration(milliseconds: 350),
+      curve: Curves.easeInOut,
+    );
   }
+
+  /// Page height most recently laid out, in logical px, for scroll math.
+  double? _lastKnownPageHeight;
+  void notifyPageHeight(double height) => _lastKnownPageHeight = height;
 
   // ── Cleanup ────────────────────────────────────────────────────────────────
   Future<void> cleanupTempFiles() async {
