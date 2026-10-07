@@ -2132,233 +2132,191 @@ class _PdfEditorScreenState extends State<PdfEditorScreen>
     );
   }
 
-  // ── Text Formatting Toolbar (docked when overlay is selected) ───────────────
+  // ── Text Formatting Toolbar (docked when overlay is selected - matches screenshot 1 & 2) ──
   Widget _buildTextFormattingToolbar(PdfOverlay overlay) {
     final isWhiteoutOn = overlay.backgroundColor != null &&
         overlay.backgroundColor != Colors.transparent;
 
     return Container(
-      margin: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      margin: const EdgeInsets.fromLTRB(10, 0, 10, 6),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.12),
+            color: Colors.black.withValues(alpha: 0.10),
             blurRadius: 16,
             offset: const Offset(0, 4),
           )
         ],
       ),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        physics: const BouncingScrollPhysics(),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // Bold Toggle [ B ]
-            _FormattingBtn(
-              label: 'B',
-              isBoldText: true,
-              isActive: overlay.isBold,
-              onTap: () => c.toggleBold(overlay.id),
-              tooltip: 'Bold',
-            ),
-            const SizedBox(width: 4),
-
-            // Italic Toggle [ I ]
-            _FormattingBtn(
-              label: 'I',
-              isActive: overlay.isItalic,
-              onTap: () => c.toggleItalic(overlay.id),
-              tooltip: 'Italic',
-            ),
-            const SizedBox(width: 4),
-
-            // Underline Toggle [ U ]
-            _FormattingBtn(
-              label: 'U',
-              isActive: overlay.isUnderline,
-              onTap: () => c.toggleUnderline(overlay.id),
-              tooltip: 'Underline',
-            ),
-            const SizedBox(width: 4),
-
-            // Whiteout background toggle [ Erase Box ]
-            _FormattingBtn(
-              label: '🔲',
-              isActive: isWhiteoutOn,
-              onTap: () => c.toggleBackgroundWhiteout(overlay.id),
-              tooltip: isWhiteoutOn ? 'Whiteout Background (ON)' : 'Whiteout Background (Cover original text)',
-            ),
-            const SizedBox(width: 6),
-
-            // Font Size Decrease [ A- ]
-            _FormattingBtn(
-              label: 'A-',
-              onTap: () => c.decreaseFontSize(overlay.id),
-              tooltip: 'Decrease Size',
-            ),
-            const SizedBox(width: 4),
-
-            // Font Size Increase [ A+ ]
-            _FormattingBtn(
-              label: 'A+',
-              onTap: () => c.increaseFontSize(overlay.id),
-              tooltip: 'Increase Size',
-            ),
-            const SizedBox(width: 6),
-
-            // Font Family Selector [ T ]
-            PopupMenuButton<String>(
-              tooltip: 'Font Family',
-              initialValue: overlay.fontFamily,
-              onSelected: (font) => c.setOverlayFontFamily(overlay.id, font),
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14)),
-              itemBuilder: (ctx) => _availableFonts
-                  .map((f) => PopupMenuItem(
-                        value: f,
-                        child: Text(f, style: TextStyle(fontFamily: f)),
-                      ))
-                  .toList(),
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF1F5F9),
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: _border),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Text('T',
-                        style: TextStyle(
-                            fontWeight: FontWeight.bold, fontSize: 14)),
-                    const SizedBox(width: 4),
-                    Text(
-                      overlay.fontFamily,
-                      style: const TextStyle(fontSize: 11, color: _subtext),
-                    ),
-                    const Icon(Icons.arrow_drop_down_rounded,
-                        size: 16, color: _subtext),
-                  ],
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceAround,
+        children: [
+          // 1. Bold Toggle [ B ]
+          InkWell(
+            borderRadius: BorderRadius.circular(8),
+            onTap: () => c.toggleBold(overlay.id),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: overlay.isBold ? const Color(0xFFEFF6FF) : Colors.transparent,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                'B',
+                style: TextStyle(
+                  fontWeight: FontWeight.w900,
+                  fontSize: 18,
+                  color: overlay.isBold ? _accent : const Color(0xFF1E293B),
                 ),
               ),
             ),
-            const SizedBox(width: 6),
+          ),
 
-            // Color Palette Selector [ Color box ]
-            PopupMenuButton<Color>(
-              tooltip: 'Text Color',
-              onSelected: (col) => c.setOverlayColor(overlay.id, col),
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14)),
-              itemBuilder: (ctx) => [
-                PopupMenuItem(
-                  enabled: false,
-                  child: Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: _paletteColors.map((col) {
-                      return GestureDetector(
-                        onTap: () {
-                          c.setOverlayColor(overlay.id, col);
-                          Navigator.pop(ctx);
-                        },
-                        child: Container(
-                          width: 32,
-                          height: 32,
-                          decoration: BoxDecoration(
-                            color: col,
-                            shape: BoxShape.circle,
-                            border: Border.all(color: _border, width: 1.5),
-                          ),
-                          child: overlay.color == col
-                              ? Icon(Icons.check_rounded,
-                                  size: 18,
-                                  color: col == Colors.white
-                                      ? Colors.black
-                                      : Colors.white)
-                              : null,
+          // 2. Font Size Decrease [ A- ]
+          InkWell(
+            borderRadius: BorderRadius.circular(8),
+            onTap: () => c.decreaseFontSize(overlay.id),
+            child: const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              child: Text(
+                'A⁻',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 17,
+                  color: Color(0xFF1E293B),
+                ),
+              ),
+            ),
+          ),
+
+          // 3. Font Size Increase [ A+ ]
+          InkWell(
+            borderRadius: BorderRadius.circular(8),
+            onTap: () => c.increaseFontSize(overlay.id),
+            child: const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              child: Text(
+                'A⁺',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 17,
+                  color: Color(0xFF1E293B),
+                ),
+              ),
+            ),
+          ),
+
+          // 4. Font Family Selector [ T ]
+          PopupMenuButton<String>(
+            tooltip: 'Font Family',
+            initialValue: overlay.fontFamily,
+            onSelected: (font) => c.setOverlayFontFamily(overlay.id, font),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+            itemBuilder: (ctx) => _availableFonts
+                .map((f) => PopupMenuItem(
+                      value: f,
+                      child: Text(f, style: TextStyle(fontFamily: f)),
+                    ))
+                .toList(),
+            child: const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              child: Text(
+                'T',
+                style: TextStyle(
+                  fontWeight: FontWeight.w800,
+                  fontSize: 18,
+                  color: Color(0xFF1E293B),
+                ),
+              ),
+            ),
+          ),
+
+          // 5. Color Palette Square Box (matches screenshot)
+          PopupMenuButton<Color>(
+            tooltip: 'Text Color',
+            onSelected: (col) => c.setOverlayColor(overlay.id, col),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+            itemBuilder: (ctx) => [
+              PopupMenuItem(
+                enabled: false,
+                child: Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: _paletteColors.map((col) {
+                    return GestureDetector(
+                      onTap: () {
+                        c.setOverlayColor(overlay.id, col);
+                        Navigator.pop(ctx);
+                      },
+                      child: Container(
+                        width: 32,
+                        height: 32,
+                        decoration: BoxDecoration(
+                          color: col,
+                          shape: BoxShape.circle,
+                          border: Border.all(color: _border, width: 1.5),
                         ),
-                      );
-                    }).toList(),
-                  ),
-                ),
-              ],
-              child: Container(
-                width: 28,
-                height: 28,
-                decoration: BoxDecoration(
-                  color: overlay.color,
-                  shape: BoxShape.circle,
-                  border: Border.all(color: Colors.black26, width: 1.5),
-                  boxShadow: [
-                    BoxShadow(
-                      color: overlay.color.withOpacity(0.3),
-                      blurRadius: 4,
-                    )
-                  ],
+                        child: overlay.color == col
+                            ? Icon(Icons.check_rounded,
+                                size: 18,
+                                color: col == Colors.white ? Colors.black : Colors.white)
+                            : null,
+                      ),
+                    );
+                  }).toList(),
                 ),
               ),
-            ),
-            const SizedBox(width: 6),
-
-            // Text Alignment Toggle (Left / Center / Right)
-            IconButton(
-              icon: Icon(
-                overlay.textAlign == TextAlign.center
-                    ? Icons.format_align_center_rounded
-                    : (overlay.textAlign == TextAlign.right
-                        ? Icons.format_align_right_rounded
-                        : Icons.format_align_left_rounded),
-                size: 20,
-                color: _text,
-              ),
-              onPressed: () {
-                final nextAlign = overlay.textAlign == TextAlign.left
-                    ? TextAlign.center
-                    : (overlay.textAlign == TextAlign.center
-                        ? TextAlign.right
-                        : TextAlign.left);
-                c.setOverlayAlignment(overlay.id, nextAlign);
-              },
-              tooltip: 'Alignment',
-            ),
-
-            const SizedBox(
+            ],
+            child: Container(
+              width: 22,
               height: 22,
-              child: VerticalDivider(color: _border, thickness: 1.2),
+              decoration: BoxDecoration(
+                color: overlay.color,
+                borderRadius: BorderRadius.circular(4),
+                border: Border.all(color: Colors.black45, width: 1.2),
+              ),
             ),
+          ),
 
-            // Duplicate Overlay Button
-            IconButton(
-              icon: const Icon(Icons.content_copy_rounded,
-                  size: 19, color: _accentDark),
-              onPressed: () => c.duplicateOverlay(overlay.id),
-              tooltip: 'Duplicate',
+          // 6. Whiteout / Mask Toggle
+          InkWell(
+            borderRadius: BorderRadius.circular(8),
+            onTap: () => c.toggleBackgroundWhiteout(overlay.id),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+              child: Icon(
+                isWhiteoutOn ? Icons.grid_view_rounded : Icons.crop_square_rounded,
+                size: 20,
+                color: isWhiteoutOn ? _accent : const Color(0xFF1E293B),
+              ),
             ),
+          ),
 
-            // Keyboard Edit Text Dialog Button
-            IconButton(
-              icon: const Icon(Icons.keyboard_rounded,
-                  size: 20, color: _accent),
-              onPressed: () => _showTextEditDialog(
-                  existingId: overlay.id, initialText: overlay.text),
-              tooltip: 'Edit Text Content',
-            ),
+          const SizedBox(
+            height: 20,
+            child: VerticalDivider(color: _border, thickness: 1.2),
+          ),
 
-            // Delete Overlay Button
-            IconButton(
-              icon: const Icon(Icons.delete_outline_rounded,
-                  size: 20, color: _selectionRed),
-              onPressed: () => c.removeOverlay(overlay.id),
-              tooltip: 'Delete',
+          // 7. Keyboard Edit Text Button (matches screenshot)
+          InkWell(
+            borderRadius: BorderRadius.circular(8),
+            onTap: () => _showTextEditDialog(
+              existingId: overlay.id,
+              initialText: overlay.text,
             ),
-          ],
-        ),
+            child: const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+              child: Icon(
+                Icons.keyboard_alt_outlined,
+                size: 22,
+                color: Color(0xFF1E293B),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -2850,6 +2808,120 @@ class _MovableOverlayWidgetState extends State<_MovableOverlayWidget> {
               child: _buildContent(),
             ),
 
+            // ── Floating Action Context Toolbar (matches Screenshot 1) ─────────────────
+            if (widget.isSelected && widget.overlay.type == OverlayType.text)
+              Positioned(
+                top: -54,
+                left: math.max(-20.0, (_size.width / 2) - 160),
+                child: Material(
+                  elevation: 6,
+                  borderRadius: BorderRadius.circular(12),
+                  color: Colors.white,
+                  shadowColor: Colors.black.withValues(alpha: 0.22),
+                  child: Container(
+                    height: 44,
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: const Color(0xFFE2E8F0)),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // 1. Edit
+                        _buildFloatingBtn(
+                          iconWidget: const Icon(Icons.edit_outlined, size: 17, color: Color(0xFF1E293B)),
+                          label: 'Edit',
+                          onTap: widget.onDoubleTap,
+                        ),
+                        _buildFloatingDivider(),
+
+                        // 2. Size (e.g. 8.4)
+                        _buildFloatingBtn(
+                          iconWidget: Text(
+                            widget.overlay.fontSize.toStringAsFixed(1),
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                              color: Color(0xFF1E293B),
+                            ),
+                          ),
+                          label: 'Size',
+                          onTap: () {
+                            Get.find<PdfEditorController>().increaseFontSize(widget.overlay.id);
+                          },
+                        ),
+                        _buildFloatingDivider(),
+
+                        // 3. Bold
+                        _buildFloatingBtn(
+                          iconWidget: Text(
+                            'B',
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w900,
+                              color: widget.overlay.isBold ? const Color(0xFF2563EB) : const Color(0xFF1E293B),
+                            ),
+                          ),
+                          label: 'Bold',
+                          isActive: widget.overlay.isBold,
+                          onTap: () {
+                            Get.find<PdfEditorController>().toggleBold(widget.overlay.id);
+                          },
+                        ),
+                        _buildFloatingDivider(),
+
+                        // 4. Color
+                        _buildFloatingBtn(
+                          iconWidget: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Text('A', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Color(0xFF1E293B))),
+                                  Container(
+                                    width: 12,
+                                    height: 2.0,
+                                    color: widget.overlay.color,
+                                  ),
+                                ],
+                              ),
+                              const Icon(Icons.arrow_drop_down, size: 13, color: Color(0xFF64748B)),
+                            ],
+                          ),
+                          label: 'Color',
+                          onTap: () {
+                            _showColorPalette(context);
+                          },
+                        ),
+                        _buildFloatingDivider(),
+
+                        // 5. Duplicate
+                        _buildFloatingBtn(
+                          iconWidget: const Icon(Icons.copy_rounded, size: 16, color: Color(0xFF1E293B)),
+                          label: 'Duplicate',
+                          onTap: () {
+                            Get.find<PdfEditorController>().duplicateOverlay(widget.overlay.id);
+                          },
+                        ),
+                        _buildFloatingDivider(),
+
+                        // 6. Delete
+                        _buildFloatingBtn(
+                          iconWidget: const Icon(Icons.delete_outline_rounded, size: 17, color: Color(0xFFEF4444)),
+                          label: 'Delete',
+                          onTap: () {
+                            Get.find<PdfEditorController>().removeOverlay(widget.overlay.id);
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+
             // Selection Handles (Left & Right circular, Bottom teardrop - frame_020, frame_040)
             if (widget.isSelected) ...[
               // Left Middle Circular Handle
@@ -2886,7 +2958,7 @@ class _MovableOverlayWidgetState extends State<_MovableOverlayWidget> {
                 ),
               ),
 
-              // Bottom Teardrop / Pin Handle (matches frame_020, frame_040)
+              // Bottom Teardrop / Pin Handle (matches frame_020, frame_040 & Screenshot 2)
               Positioned(
                 left: (_size.width / 2) - 8,
                 bottom: -22,
@@ -2916,7 +2988,7 @@ class _MovableOverlayWidgetState extends State<_MovableOverlayWidget> {
                           shape: BoxShape.circle,
                           boxShadow: [
                             BoxShadow(
-                              color: Colors.red.withOpacity(0.35),
+                              color: Colors.red.withValues(alpha: 0.35),
                               blurRadius: 4,
                               offset: const Offset(0, 1),
                             )
@@ -2929,6 +3001,88 @@ class _MovableOverlayWidgetState extends State<_MovableOverlayWidget> {
               ),
             ],
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFloatingBtn({
+    required Widget iconWidget,
+    required String label,
+    required VoidCallback onTap,
+    bool isActive = false,
+  }) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(8),
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+        decoration: BoxDecoration(
+          color: isActive ? const Color(0xFFEFF6FF) : Colors.transparent,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            SizedBox(height: 18, child: Center(child: iconWidget)),
+            const SizedBox(height: 1),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 9.5,
+                fontWeight: FontWeight.w600,
+                color: isActive ? const Color(0xFF2563EB) : const Color(0xFF64748B),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFloatingDivider() {
+    return Container(
+      width: 1,
+      height: 20,
+      margin: const EdgeInsets.symmetric(horizontal: 2),
+      color: const Color(0xFFE2E8F0),
+    );
+  }
+
+  void _showColorPalette(BuildContext context) {
+    final c = Get.find<PdfEditorController>();
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('Text Color', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+        content: Wrap(
+          spacing: 10,
+          runSpacing: 10,
+          children: _PdfEditorScreenState._paletteColors.map((col) {
+            return GestureDetector(
+              onTap: () {
+                c.setOverlayColor(widget.overlay.id, col);
+                Navigator.pop(ctx);
+              },
+              child: Container(
+                width: 34,
+                height: 34,
+                decoration: BoxDecoration(
+                  color: col,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: _PdfEditorScreenState._border, width: 1.5),
+                ),
+                child: widget.overlay.color == col
+                    ? Icon(Icons.check_rounded,
+                        size: 18,
+                        color: col == Colors.white ? Colors.black : Colors.white)
+                    : null,
+              ),
+            );
+          }).toList(),
         ),
       ),
     );
