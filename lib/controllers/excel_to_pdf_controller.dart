@@ -212,17 +212,29 @@ class ExcelToPdfController extends GetxController {
     try {
       final archive = ZipDecoder().decodeBytes(bytes);
 
+      ArchiveFile? findZipFile(String path) {
+        final lower = path.toLowerCase().replaceAll('\\', '/');
+        for (final f in archive.files) {
+          final fLower = f.name.toLowerCase().replaceAll('\\', '/');
+          if (fLower == lower || fLower.endsWith('/$lower') || fLower == 'xl/$lower') {
+            return f;
+          }
+        }
+        return null;
+      }
+
       // 1. Parse Shared Strings (xl/sharedStrings.xml)
       final sharedStrings = <String>[];
-      final ssFile = archive.findFile('xl/sharedStrings.xml');
+      final ssFile = findZipFile('xl/sharedStrings.xml') ?? findZipFile('sharedstrings.xml');
       if (ssFile != null) {
         final ssXml = utf8.decode(ssFile.content as List<int>, allowMalformed: true);
         final siRegex = RegExp(r'<si[\s>].*?<\/si>', dotAll: true);
         for (final siMatch in siRegex.allMatches(ssXml)) {
           final siContent = siMatch.group(0)!;
-          final tMatch = RegExp(r'<t[^>]*>(.*?)<\/t>', dotAll: true).firstMatch(siContent);
-          if (tMatch != null) {
-            sharedStrings.add(_xmlUnescape(tMatch.group(1)!));
+          final tMatches = RegExp(r'<t[^>]*>(.*?)<\/t>', dotAll: true).allMatches(siContent);
+          if (tMatches.isNotEmpty) {
+            final combined = tMatches.map((m) => _xmlUnescape(m.group(1)!)).join();
+            sharedStrings.add(combined);
           } else {
             sharedStrings.add('');
           }
@@ -231,25 +243,27 @@ class ExcelToPdfController extends GetxController {
 
       // 2. Parse Sheet Names & Relationship IDs from xl/workbook.xml
       final sheetEntries = <Map<String, String>>[];
-      final wbFile = archive.findFile('xl/workbook.xml');
+      final wbFile = findZipFile('xl/workbook.xml') ?? findZipFile('workbook.xml');
       if (wbFile != null) {
         final wbXml = utf8.decode(wbFile.content as List<int>, allowMalformed: true);
-        final sheetTagRegex = RegExp(r'<sheet\s+[^>]*name="([^"]+)"[^>]*sheetId="([^"]+)"[^>]*r:id="([^"]+)"', dotAll: true);
+        final sheetTagRegex = RegExp(
+            r'<sheet\s+[^>]*name="([^"]+)"[^>]*sheetId="([^"]+)"(?:[^>]*r:id="([^"]+)")?',
+            dotAll: true);
         for (final m in sheetTagRegex.allMatches(wbXml)) {
           sheetEntries.add({
             'name': m.group(1)!,
             'sheetId': m.group(2)!,
-            'rId': m.group(3)!,
+            'rId': m.group(3) ?? '',
           });
         }
       }
 
-      // Fallback if workbook.xml parsing missed sheets
+      // If no sheets found in workbook.xml, discover directly from zip files
       if (sheetEntries.isEmpty) {
         int index = 1;
         for (final f in archive.files) {
-          final n = f.name.toLowerCase();
-          if (n.startsWith('xl/worksheets/sheet') && n.endsWith('.xml')) {
+          final n = f.name.toLowerCase().replaceAll('\\', '/');
+          if ((n.contains('worksheets/sheet') || n.contains('worksheets/')) && n.endsWith('.xml')) {
             sheetEntries.add({'name': 'Sheet$index', 'path': f.name});
             index++;
           }
@@ -261,9 +275,26 @@ class ExcelToPdfController extends GetxController {
       for (int i = 0; i < sheetEntries.length; i++) {
         final entry = sheetEntries[i];
         final sheetName = entry['name'] ?? 'Sheet${i + 1}';
-        final sheetPath = entry['path'] ?? 'xl/worksheets/sheet${i + 1}.xml';
+        final customPath = entry['path'];
 
-        final sheetFile = archive.findFile(sheetPath) ?? archive.findFile('xl/worksheets/sheet${i + 1}.xml');
+        ArchiveFile? sheetFile;
+        if (customPath != null) {
+          sheetFile = findZipFile(customPath);
+        }
+        sheetFile ??= findZipFile('xl/worksheets/sheet${i + 1}.xml') ??
+            findZipFile('worksheets/sheet${i + 1}.xml') ??
+            findZipFile('sheet${i + 1}.xml');
+
+        if (sheetFile == null) {
+          final wsFiles = archive.files.where((f) {
+            final n = f.name.toLowerCase().replaceAll('\\', '/');
+            return n.contains('worksheets/') && n.endsWith('.xml');
+          }).toList();
+          if (i < wsFiles.length) {
+            sheetFile = wsFiles[i];
+          }
+        }
+
         if (sheetFile == null) continue;
 
         final sheetXml = utf8.decode(sheetFile.content as List<int>, allowMalformed: true);

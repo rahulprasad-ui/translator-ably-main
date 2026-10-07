@@ -264,7 +264,16 @@ class WordToPdfController extends GetxController {
   Future<List<WordBlock>> _parseDocxBytes(Uint8List bytes) async {
     try {
       final archive = ZipDecoder().decodeBytes(bytes);
-      final docFile = archive.findFile('word/document.xml');
+      ArchiveFile? docFile = archive.findFile('word/document.xml');
+      if (docFile == null) {
+        for (final f in archive.files) {
+          final fLower = f.name.toLowerCase().replaceAll('\\', '/');
+          if (fLower == 'word/document.xml' || fLower.endsWith('/word/document.xml') || fLower == 'document.xml') {
+            docFile = f;
+            break;
+          }
+        }
+      }
 
       if (docFile == null) {
         return _parseLegacyDocBytes(bytes);

@@ -837,18 +837,22 @@ class _AllPdfReaderScreenState extends State<AllPdfReaderScreen> with WidgetsBin
     _recentPaths.insert(0, doc.path);
     Pref.recentPdfPaths = _recentPaths;
 
-    if (doc.ext == 'pdf') {
-      if (File(doc.path).existsSync()) {
-        Get.to(() => PdfEditorScreen(initialPdfPath: doc.path));
-      } else {
-        MyDialogs.error(msg: 'File does not exist or has been removed');
-      }
-    } else if (doc.ext == 'doc' || doc.ext == 'docx') {
-      Get.to(() => const WordToPdfScreen());
-    } else if (doc.ext == 'xls' || doc.ext == 'xlsx') {
-      Get.to(() => const ExcelToPdfScreen());
-    } else if (doc.ext == 'ppt' || doc.ext == 'pptx') {
-      Get.to(() => const PptxToPdfScreen());
+    if (!File(doc.path).existsSync()) {
+      MyDialogs.error(msg: 'File does not exist or has been removed');
+      return;
+    }
+
+    final ext = doc.ext.toLowerCase();
+    if (ext == 'pdf') {
+      Get.to(() => PdfEditorScreen(initialPdfPath: doc.path));
+    } else if (ext == 'doc' || ext == 'docx') {
+      Get.to(() => WordToPdfScreen(initialDocPath: doc.path));
+    } else if (ext == 'xls' || ext == 'xlsx' || ext == 'csv' || ext == 'tsv') {
+      Get.to(() => ExcelToPdfScreen(initialFilePath: doc.path));
+    } else if (ext == 'ppt' || ext == 'pptx') {
+      Get.to(() => PptxToPdfScreen(initialPptxPath: doc.path));
+    } else {
+      Get.to(() => PdfEditorScreen(initialPdfPath: doc.path));
     }
   }
 
