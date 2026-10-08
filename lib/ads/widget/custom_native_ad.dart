@@ -48,7 +48,7 @@ class CustomNativeAd extends StatelessWidget {
                 border: Border.all(color: pColor, width: 0.5),
                 borderRadius: const BorderRadius.all(Radius.circular(10)))
             : null,
-        height: height ?? 90,
+        height: height ?? 100,
         width: width,
         child: AdWidget(ad: adController.ad!));
   }

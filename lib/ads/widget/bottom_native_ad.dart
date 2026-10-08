@@ -12,7 +12,7 @@ class BottomNativeAd extends StatefulWidget {
 
   const BottomNativeAd({
     super.key,
-    this.height = 90,
+    this.height = 100,
     this.margin = EdgeInsets.zero,
     this.border = false,
   });
