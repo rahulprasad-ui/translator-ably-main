@@ -142,11 +142,13 @@ class _AllPdfReaderScreenState extends State<AllPdfReaderScreen> with WidgetsBin
   }
 
   Future<void> _loadDocuments() async {
+    if (!mounted) return;
     setState(() => _isLoading = true);
 
     final List<DocItem> list = [];
+    final Set<String> seenPaths = {};
 
-    // 1. Android MediaStore Query (Queries Android OS index of all documents across the phone)
+    // 1. Android MediaStore Query (Fast OS-level document indexing queried in background thread)
     if (Platform.isAndroid) {
       try {
         final List<dynamic>? mediaStoreDocs = await _storageChannel.invokeMethod('queryAllDocuments');
@@ -154,6 +156,7 @@ class _AllPdfReaderScreenState extends State<AllPdfReaderScreen> with WidgetsBin
           for (final item in mediaStoreDocs) {
             try {
               final path = item['path'] as String? ?? '';
+              if (path.isEmpty || seenPaths.contains(path)) continue;
               final name = item['name'] as String? ?? '';
               final size = (item['size'] as num?)?.toInt() ?? 0;
               final modifiedMillis = (item['modified'] as num?)?.toInt() ?? 0;
@@ -161,69 +164,50 @@ class _AllPdfReaderScreenState extends State<AllPdfReaderScreen> with WidgetsBin
               if (actualName.startsWith('.')) continue;
               final ext = actualName.contains('.') ? actualName.split('.').last.toLowerCase() : 'pdf';
 
-              if (path.isNotEmpty && File(path).existsSync()) {
-                if (!list.any((d) => d.path == path)) {
-                  list.add(DocItem(
-                    name: actualName,
-                    path: path,
-                    sizeBytes: size,
-                    modified: modifiedMillis > 0
-                        ? DateTime.fromMillisecondsSinceEpoch(modifiedMillis)
-                        : DateTime.now(),
-                    ext: ext,
-                    isBookmarked: _bookmarkedPaths.contains(path),
-                  ));
-                }
-              }
+              seenPaths.add(path);
+              list.add(DocItem(
+                name: actualName,
+                path: path,
+                sizeBytes: size,
+                modified: modifiedMillis > 0
+                    ? DateTime.fromMillisecondsSinceEpoch(modifiedMillis)
+                    : DateTime.now(),
+                ext: ext,
+                isBookmarked: _bookmarkedPaths.contains(path),
+              ));
             } catch (_) {}
           }
         }
       } catch (_) {}
     }
 
-    // 2. Comprehensive Filesystem Scan
+    // 2. Scan app documents & standard directories asynchronously (non-blocking)
     try {
       final appDir = await getApplicationDocumentsDirectory();
-      _scanDirectory(appDir, list, maxDepth: 2);
+      await _scanDirectoryAsync(appDir, list, seenPaths, maxDepth: 2);
 
       final extDir = await getExternalStorageDirectory();
       if (extDir != null) {
-        _scanDirectory(extDir, list, maxDepth: 2);
+        await _scanDirectoryAsync(extDir, list, seenPaths, maxDepth: 2);
       }
 
+      // Check standard Download & Documents directories (shallow scan only, no deep recursion)
       if (Platform.isAndroid) {
-        final rootDir = Directory('/storage/emulated/0');
-        if (rootDir.existsSync()) {
-          try {
-            final topEntries = rootDir.listSync(followLinks: false);
-            for (final entry in topEntries) {
-              if (entry is File) {
-                _checkAndAddFile(entry, list);
-              } else if (entry is Directory) {
-                final folderName = entry.path.split(Platform.pathSeparator).last;
-                if (folderName.startsWith('.')) continue;
-
-                if (folderName.toLowerCase() == 'android') {
-                  // Specifically scan Android/media (WhatsApp, Telegram documents)
-                  final mediaDir = Directory('${entry.path}/media');
-                  if (mediaDir.existsSync()) {
-                    _scanDirectory(mediaDir, list, currentDepth: 0, maxDepth: 4);
-                  }
-                  continue;
-                }
-
-                // Scan all other directories (Download, Documents, Bluetooth, WPS, Books, etc.)
-                _scanDirectory(entry, list, currentDepth: 0, maxDepth: 5);
-              }
-            }
-          } catch (_) {}
+        for (final dirPath in const [
+          '/storage/emulated/0/Download',
+          '/storage/emulated/0/Documents',
+        ]) {
+          final dir = Directory(dirPath);
+          if (dir.existsSync()) {
+            await _scanDirectoryAsync(dir, list, seenPaths, maxDepth: 1);
+          }
         }
       }
     } catch (_) {}
 
     // 3. Include previously saved recent or bookmarked files if they exist on disk
     for (final path in {..._recentPaths, ..._bookmarkedPaths}) {
-      if (!list.any((d) => d.path == path)) {
+      if (!seenPaths.contains(path)) {
         final file = File(path);
         if (file.existsSync()) {
           try {
@@ -232,6 +216,7 @@ class _AllPdfReaderScreenState extends State<AllPdfReaderScreen> with WidgetsBin
                 ? file.uri.pathSegments.last
                 : path.split(Platform.pathSeparator).last;
             final ext = path.split('.').last.toLowerCase();
+            seenPaths.add(path);
             list.add(DocItem(
               name: name,
               path: path,
@@ -256,6 +241,7 @@ class _AllPdfReaderScreenState extends State<AllPdfReaderScreen> with WidgetsBin
       }
     }
 
+    if (!mounted) return;
     setState(() {
       _documents.clear();
       _documents.addAll(list);
@@ -263,42 +249,53 @@ class _AllPdfReaderScreenState extends State<AllPdfReaderScreen> with WidgetsBin
     });
   }
 
-  void _checkAndAddFile(File file, List<DocItem> outList) {
+  void _checkAndAddFile(File file, List<DocItem> outList, Set<String> seenPaths) {
+    if (seenPaths.contains(file.path)) return;
     final ext = file.path.split('.').last.toLowerCase();
     if (const ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx'].contains(ext)) {
-      if (!outList.any((item) => item.path == file.path)) {
-        try {
-          final stat = file.statSync();
-          final name = file.uri.pathSegments.isNotEmpty
-              ? file.uri.pathSegments.last
-              : file.path.split(Platform.pathSeparator).last;
-          if (name.startsWith('.')) return;
-          outList.add(DocItem(
-            name: name,
-            path: file.path,
-            sizeBytes: stat.size,
-            modified: stat.modified,
-            ext: ext,
-            isBookmarked: _bookmarkedPaths.contains(file.path),
-          ));
-        } catch (_) {}
-      }
+      try {
+        final name = file.uri.pathSegments.isNotEmpty
+            ? file.uri.pathSegments.last
+            : file.path.split(Platform.pathSeparator).last;
+        if (name.startsWith('.')) return;
+        final stat = file.statSync();
+        seenPaths.add(file.path);
+        outList.add(DocItem(
+          name: name,
+          path: file.path,
+          sizeBytes: stat.size,
+          modified: stat.modified,
+          ext: ext,
+          isBookmarked: _bookmarkedPaths.contains(file.path),
+        ));
+      } catch (_) {}
     }
   }
 
-  void _scanDirectory(Directory dir, List<DocItem> outList, {int currentDepth = 0, int maxDepth = 5}) {
+  Future<void> _scanDirectoryAsync(
+    Directory dir,
+    List<DocItem> outList,
+    Set<String> seenPaths, {
+    int currentDepth = 0,
+    int maxDepth = 2,
+  }) async {
     if (!dir.existsSync()) return;
     try {
-      final entries = dir.listSync(followLinks: false);
-      for (final e in entries) {
+      await for (final e in dir.list(followLinks: false)) {
         try {
           if (e is File) {
-            _checkAndAddFile(e, outList);
+            _checkAndAddFile(e, outList, seenPaths);
           } else if (e is Directory && currentDepth < maxDepth) {
             final seg = e.uri.pathSegments.where((s) => s.isNotEmpty).lastOrNull ?? '';
             // Avoid hidden directories and restricted Android internal folders
-            if (!seg.startsWith('.') && seg != 'data' && seg != 'obb') {
-              _scanDirectory(e, outList, currentDepth: currentDepth + 1, maxDepth: maxDepth);
+            if (!seg.startsWith('.') && seg != 'data' && seg != 'obb' && seg != 'Android') {
+              await _scanDirectoryAsync(
+                e,
+                outList,
+                seenPaths,
+                currentDepth: currentDepth + 1,
+                maxDepth: maxDepth,
+              );
             }
           }
         } catch (_) {}
@@ -362,12 +359,14 @@ class _AllPdfReaderScreenState extends State<AllPdfReaderScreen> with WidgetsBin
       }
 
       final List<DocItem> folderDocs = [];
-      _scanDirectory(dir, folderDocs, currentDepth: 0, maxDepth: 4);
+      final Set<String> folderSeen = {};
+      await _scanDirectoryAsync(dir, folderDocs, folderSeen, currentDepth: 0, maxDepth: 4);
 
       if (folderDocs.isNotEmpty) {
         setState(() {
+          final existingPaths = _documents.map((d) => d.path).toSet();
           for (final doc in folderDocs) {
-            if (!_documents.any((d) => d.path == doc.path)) {
+            if (!existingPaths.contains(doc.path)) {
               _documents.insert(0, doc);
             }
           }
@@ -781,19 +780,18 @@ class _AllPdfReaderScreenState extends State<AllPdfReaderScreen> with WidgetsBin
 
     // Filter by selected folder if active
     if (_selectedFolderFilter != null) {
-      list = list.where((d) => File(d.path).parent.path == _selectedFolderFilter).toList();
+      final sep = Platform.pathSeparator;
+      list = list.where((d) {
+        final lastSep = d.path.lastIndexOf(sep);
+        return lastSep > 0 && d.path.substring(0, lastSep) == _selectedFolderFilter;
+      }).toList();
     }
 
     // Filter by bottom navigation
     if (_bottomNavIndex == 1) {
-      // Recent: only documents whose path is in _recentPaths
-      list = list.where((d) => _recentPaths.contains(d.path)).toList();
-      // Sort by the order in _recentPaths (most recently opened first)
-      list.sort((a, b) {
-        final indexA = _recentPaths.indexOf(a.path);
-        final indexB = _recentPaths.indexOf(b.path);
-        return indexA.compareTo(indexB);
-      });
+      final recentOrder = {for (int i = 0; i < _recentPaths.length; i++) _recentPaths[i]: i};
+      list = list.where((d) => recentOrder.containsKey(d.path)).toList();
+      list.sort((a, b) => (recentOrder[a.path] ?? 0).compareTo(recentOrder[b.path] ?? 0));
     } else if (_bottomNavIndex == 2) {
       // Bookmarks
       list = list.where((d) => d.isBookmarked).toList();
@@ -1430,7 +1428,7 @@ class _AllPdfReaderScreenState extends State<AllPdfReaderScreen> with WidgetsBin
                               if (docs.length >= 2 && index == 1) {
                                 return CustomNativeAd(
                                   adController: _nativeAdController,
-                                  height: 85,
+                                  height: 100,
                                   safeArea: false,
                                   margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
                                 );

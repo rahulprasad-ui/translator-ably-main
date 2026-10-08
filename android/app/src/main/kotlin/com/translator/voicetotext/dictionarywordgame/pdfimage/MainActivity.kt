@@ -92,54 +92,58 @@ class MainActivity: FlutterActivity() {
                     result.success(true)
                 }
                 "queryAllDocuments" -> {
-                    val docsList = mutableListOf<Map<String, Any>>()
-                    try {
-                        val projection = arrayOf(
-                            MediaStore.Files.FileColumns.DATA,
-                            MediaStore.Files.FileColumns.DISPLAY_NAME,
-                            MediaStore.Files.FileColumns.SIZE,
-                            MediaStore.Files.FileColumns.DATE_MODIFIED
-                        )
-                        val selection = "(${MediaStore.Files.FileColumns.DATA} LIKE '%.pdf' OR " +
-                                "${MediaStore.Files.FileColumns.DATA} LIKE '%.doc' OR " +
-                                "${MediaStore.Files.FileColumns.DATA} LIKE '%.docx' OR " +
-                                "${MediaStore.Files.FileColumns.DATA} LIKE '%.xls' OR " +
-                                "${MediaStore.Files.FileColumns.DATA} LIKE '%.xlsx' OR " +
-                                "${MediaStore.Files.FileColumns.DATA} LIKE '%.ppt' OR " +
-                                "${MediaStore.Files.FileColumns.DATA} LIKE '%.pptx')"
+                    Thread {
+                        val docsList = mutableListOf<Map<String, Any>>()
+                        try {
+                            val projection = arrayOf(
+                                MediaStore.Files.FileColumns.DATA,
+                                MediaStore.Files.FileColumns.DISPLAY_NAME,
+                                MediaStore.Files.FileColumns.SIZE,
+                                MediaStore.Files.FileColumns.DATE_MODIFIED
+                            )
+                            val selection = "(${MediaStore.Files.FileColumns.DATA} LIKE '%.pdf' OR " +
+                                    "${MediaStore.Files.FileColumns.DATA} LIKE '%.doc' OR " +
+                                    "${MediaStore.Files.FileColumns.DATA} LIKE '%.docx' OR " +
+                                    "${MediaStore.Files.FileColumns.DATA} LIKE '%.xls' OR " +
+                                    "${MediaStore.Files.FileColumns.DATA} LIKE '%.xlsx' OR " +
+                                    "${MediaStore.Files.FileColumns.DATA} LIKE '%.ppt' OR " +
+                                    "${MediaStore.Files.FileColumns.DATA} LIKE '%.pptx')"
 
-                        val cursor = contentResolver.query(
-                            MediaStore.Files.getContentUri("external"),
-                            projection,
-                            selection,
-                            null,
-                            "${MediaStore.Files.FileColumns.DATE_MODIFIED} DESC"
-                        )
+                            val cursor = contentResolver.query(
+                                MediaStore.Files.getContentUri("external"),
+                                projection,
+                                selection,
+                                null,
+                                "${MediaStore.Files.FileColumns.DATE_MODIFIED} DESC"
+                            )
 
-                        cursor?.use {
-                            val dataCol = it.getColumnIndexOrThrow(MediaStore.Files.FileColumns.DATA)
-                            val nameCol = it.getColumnIndexOrThrow(MediaStore.Files.FileColumns.DISPLAY_NAME)
-                            val sizeCol = it.getColumnIndexOrThrow(MediaStore.Files.FileColumns.SIZE)
-                            val dateCol = it.getColumnIndexOrThrow(MediaStore.Files.FileColumns.DATE_MODIFIED)
+                            cursor?.use {
+                                val dataCol = it.getColumnIndexOrThrow(MediaStore.Files.FileColumns.DATA)
+                                val nameCol = it.getColumnIndexOrThrow(MediaStore.Files.FileColumns.DISPLAY_NAME)
+                                val sizeCol = it.getColumnIndexOrThrow(MediaStore.Files.FileColumns.SIZE)
+                                val dateCol = it.getColumnIndexOrThrow(MediaStore.Files.FileColumns.DATE_MODIFIED)
 
-                            while (it.moveToNext()) {
-                                val path = it.getString(dataCol) ?: continue
-                                val name = it.getString(nameCol) ?: path.substringAfterLast('/')
-                                val size = it.getLong(sizeCol)
-                                val modifiedSeconds = it.getLong(dateCol)
+                                while (it.moveToNext()) {
+                                    val path = it.getString(dataCol) ?: continue
+                                    val name = it.getString(nameCol) ?: path.substringAfterLast('/')
+                                    val size = it.getLong(sizeCol)
+                                    val modifiedSeconds = it.getLong(dateCol)
 
-                                docsList.add(mapOf(
-                                    "path" to path,
-                                    "name" to name,
-                                    "size" to size,
-                                    "modified" to (modifiedSeconds * 1000)
-                                ))
+                                    docsList.add(mapOf(
+                                        "path" to path,
+                                        "name" to name,
+                                        "size" to size,
+                                        "modified" to (modifiedSeconds * 1000)
+                                    ))
+                                }
                             }
+                        } catch (e: Exception) {
+                            e.printStackTrace()
                         }
-                    } catch (e: Exception) {
-                        e.printStackTrace()
-                    }
-                    result.success(docsList)
+                        runOnUiThread {
+                            result.success(docsList)
+                        }
+                    }.start()
                 }
                 else -> result.notImplemented()
             }
