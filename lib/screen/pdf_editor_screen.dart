@@ -279,6 +279,9 @@ class _PdfEditorScreenState extends State<PdfEditorScreen>
     Size? pageSize,
   }) async {
     final ctrl = TextEditingController(text: initialText ?? '');
+    if (ctrl.text.isNotEmpty) {
+      ctrl.selection = TextSelection(baseOffset: 0, extentOffset: ctrl.text.length);
+    }
     final isEditingExistingOverlay = existingId != null;
     final isReplacingOriginalText = detectedElement != null;
     bool coverOriginalText = true; // Default: cover original PDF text with clean white background
@@ -429,9 +432,10 @@ class _PdfEditorScreenState extends State<PdfEditorScreen>
                   });
                 }
               },
-              child: Text(isReplacingOriginalText
-                  ? 'Replace in PDF'
-                  : (isEditingExistingOverlay ? 'Apply' : 'Insert / Replace')),
+              child: Text(
+                isReplacingOriginalText ? 'Done' : 'Done',
+                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+              ),
             ),
           ],
         ),
@@ -1908,10 +1912,18 @@ class _PdfEditorScreenState extends State<PdfEditorScreen>
                     }
                   },
                   onTapDetectedText: (pageIdx, detectedElem, pageSize) {
+                    // Pre-select element in controller
                     c.selectOrStartEditingText(
                       pageIndex: pageIdx,
                       detectedElement: detectedElem,
                       pageSize: pageSize,
+                    );
+                    // Instant Tap-to-Edit: immediately open edit dialog with original text prefilled
+                    _showTextEditDialog(
+                      pageIndex: pageIdx,
+                      detectedElement: detectedElem,
+                      pageSize: pageSize,
+                      initialText: detectedElem.text,
                     );
                   },
                   onTapPageToAddText: (pageIdx, tapPos) {
@@ -2586,6 +2598,13 @@ class _InteractivePageOverlayLayerState
   Widget build(BuildContext context) {
     return Obx(() {
       final isEditMode = widget.controller.editorMode.value == EditorMode.edit;
+      if (isEditMode &&
+          !widget.controller.detectedPageTexts.containsKey(widget.pageIndex) &&
+          !widget.controller.isDetectingText.value) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) widget.controller.detectTextOnPage(widget.pageIndex);
+        });
+      }
       final overlays = widget.controller.overlaysForPage(widget.pageIndex);
       final selectedId = widget.controller.selectedOverlayId.value;
 
@@ -2606,12 +2625,7 @@ class _InteractivePageOverlayLayerState
                 child: GestureDetector(
                   behavior: HitTestBehavior.opaque,
                   onTapUp: (details) async {
-                    if (widget.controller.selectedOverlayId.value != null) {
-                      widget.controller.selectOverlay(null);
-                      return;
-                    }
-
-                    // Check if user tapped a recognized word/line in the PDF
+                    // Check if user tapped a recognized word/line in the PDF first
                     var match = widget.controller.findDetectedTextAtPosition(
                       pageIndex: widget.pageIndex,
                       tapPos: details.localPosition,
@@ -2620,6 +2634,11 @@ class _InteractivePageOverlayLayerState
 
                     if (match != null) {
                       widget.onTapDetectedText?.call(widget.pageIndex, match, pageSize);
+                      return;
+                    }
+
+                    if (widget.controller.selectedOverlayId.value != null) {
+                      widget.controller.selectOverlay(null);
                       return;
                     }
 
@@ -2664,14 +2683,7 @@ class _InteractivePageOverlayLayerState
                       widget.onTapDetectedText?.call(widget.pageIndex, elem, pageSize);
                     },
                     child: Container(
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(3),
-                        border: Border.all(
-                          color: const Color(0xFF3B82F6).withValues(alpha: 0.35),
-                          width: 1.0,
-                        ),
-                        color: const Color(0xFF3B82F6).withValues(alpha: 0.05),
-                      ),
+                      color: Colors.transparent,
                     ),
                   ),
                 );
@@ -2723,7 +2735,13 @@ class _InteractivePageOverlayLayerState
                 overlay: o,
                 isSelected: isSelected,
                 isEditMode: isEditMode,
-                onSelect: () => widget.controller.selectOverlay(o.id),
+                onSelect: () {
+                  if (isSelected && o.type == OverlayType.text) {
+                    widget.onTapEditOverlay(o);
+                  } else {
+                    widget.controller.selectOverlay(o.id);
+                  }
+                },
                 onUpdatePos: (newPos) =>
                     widget.controller.updateOverlayPosition(o.id, newPos),
                 onUpdateSize: (newSize) =>
@@ -2816,7 +2834,13 @@ class _MovableOverlayWidgetState extends State<_MovableOverlayWidget> {
       top: _pos.dy,
       child: GestureDetector(
         onTap: () {
-          if (widget.isEditMode) widget.onSelect();
+          if (widget.isEditMode) {
+            if (widget.isSelected && widget.overlay.type == OverlayType.text) {
+              widget.onDoubleTap();
+            } else {
+              widget.onSelect();
+            }
+          }
         },
         onDoubleTap: () {
           if (widget.isEditMode) widget.onDoubleTap();
@@ -2841,9 +2865,7 @@ class _MovableOverlayWidgetState extends State<_MovableOverlayWidget> {
                 // When selected: precise Adobe Acrobat red rectangular bounding box
                 border: widget.isSelected
                     ? Border.all(color: const Color(0xFFEF4444), width: 1.8)
-                    : (widget.isEditMode
-                        ? Border.all(color: Colors.blue.withValues(alpha: 0.25), width: 0.8)
-                        : null),
+                    : null,
                 borderRadius: BorderRadius.circular(2),
                 color: widget.isSelected
                     ? const Color(0xFFEF4444).withValues(alpha: 0.02)

@@ -944,30 +944,52 @@ class PdfEditorController extends GetxController {
   }) {
     recordHistory();
     final scaled = element.getScaledRect(pageSize);
-    final newId = 'replace_${element.text.hashCode}_$pageIndex';
+    final overlayId = element.id;
 
-    overlays.removeWhere((o) => o.id == newId);
+    // Remove any existing overlay for this element to prevent duplication
+    overlays.removeWhere((o) =>
+        o.id == overlayId ||
+        o.id == 'replace_${element.text.hashCode}_$pageIndex' ||
+        o.originalDetectedElement?.id == element.id);
 
-    final estimatedFontSize = (scaled.height * 0.78).clamp(10.0, 48.0);
+    final scale = element.sourceWidth > 0
+        ? pageSize.width / element.sourceWidth
+        : 1.0;
+    final displayFontSize = element.fontSize > 0
+        ? (element.fontSize * scale).clamp(8.0, 72.0)
+        : (scaled.height * 0.78).clamp(10.0, 48.0);
     final charRatio = newText.length / math.max(1, element.text.length);
-    final estimatedWidth = math.max(scaled.width * charRatio + 16, scaled.width + 12);
+    final estimatedWidth = math.max(scaled.width * charRatio + 16, scaled.width + 8);
 
     final overlay = PdfOverlay(
-      id: newId,
+      id: overlayId,
       pageIndex: pageIndex,
       type: OverlayType.text,
-      position: Offset(scaled.left - 2, scaled.top - 2),
-      size: Size(estimatedWidth, scaled.height + 4),
+      position: Offset(scaled.left - 1.0, scaled.top - 1.0),
+      size: Size(
+        math.max(32.0, estimatedWidth),
+        math.max(18.0, scaled.height + 4.0),
+      ),
       text: newText,
       color: color,
       backgroundColor: Colors.white,
-      fontSize: estimatedFontSize,
-      fontFamily: fontFamily,
-      isBold: isBold,
+      fontSize: displayFontSize,
+      fontFamily: element.fontName.isNotEmpty ? element.fontName : fontFamily,
+      isBold: isBold || element.isBold,
+      isItalic: element.isItalic,
+      originalDetectedElement: element,
+      originalText: element.text,
+      originalPdfX: element.isNativePdfText ? element.boundingBox.left : null,
+      originalPdfY: element.isNativePdfText ? element.boundingBox.top : null,
+      originalPdfW: element.isNativePdfText ? element.boundingBox.width : null,
+      originalPdfH: element.isNativePdfText ? element.boundingBox.height : null,
+      originalLayoutPageWidth: pageSize.width,
+      originalLayoutPageHeight: pageSize.height,
+      coverOriginal: true,
     );
 
     overlays.add(overlay);
-    selectedOverlayId.value = newId;
+    selectedOverlayId.value = overlayId;
     return overlay;
   }
 
