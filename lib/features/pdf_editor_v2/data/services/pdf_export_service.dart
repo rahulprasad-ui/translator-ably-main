@@ -89,13 +89,11 @@ class PdfExportService {
       // Verification Step 1: Can the exported PDF be rendered by the PDF engine?
       bool renderable = false;
       try {
-        final verifierRenderer = PdfRendererService();
-        final pagesCount = await verifierRenderer.openDocument(outputPath);
+        final pagesCount = await _rendererService.openDocument(outputPath);
         if (pagesCount > 0) {
-          final testBytes = await verifierRenderer.renderPage(pageIndex: 0, scale: 1.0);
+          final testBytes = await _rendererService.renderPage(pageIndex: 0, scale: 1.0);
           renderable = testBytes != null && testBytes.isNotEmpty;
         }
-        await verifierRenderer.dispose();
       } catch (_) {
         renderable = false;
       }

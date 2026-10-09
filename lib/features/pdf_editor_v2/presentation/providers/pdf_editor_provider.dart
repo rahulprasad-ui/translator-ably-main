@@ -116,18 +116,19 @@ final pdfExportServiceProvider = Provider<PdfExportService>((ref) {
 
 /// Riverpod StateNotifier managing the PDF Editor logic
 class PdfEditorNotifier extends StateNotifier<PdfEditorState> {
-  final PdfRendererService _rendererService;
-  final PdfTextExtractorService _textExtractorService;
-  final PdfExportService _exportService;
+  final PdfRendererService rendererService;
+  final PdfTextExtractorService textExtractorService;
+  final PdfExportService exportService;
 
   PdfEditorNotifier({
-    required PdfRendererService rendererService,
-    required PdfTextExtractorService textExtractorService,
-    required PdfExportService exportService,
-  })  : _rendererService = rendererService,
-        _textExtractorService = textExtractorService,
-        _exportService = exportService,
-        super(const PdfEditorState());
+    required this.rendererService,
+    required this.textExtractorService,
+    required this.exportService,
+  }) : super(const PdfEditorState());
+
+  PdfRendererService get _rendererService => rendererService;
+  PdfTextExtractorService get _textExtractorService => textExtractorService;
+  PdfExportService get _exportService => exportService;
 
   /// Opens a PDF document and extracts the first page
   Future<void> openPdf(String filePath) async {

@@ -304,7 +304,9 @@ class _PdfEditorContentState extends ConsumerState<_PdfEditorContent> {
               ElevatedButton.icon(
                 onPressed: () {
                   Navigator.of(ctx).pop();
-                  SharePlus.instance.share(path, subject: 'Modified PDF');
+                  SharePlus.instance.share(
+                    ShareParams(files: [XFile(path)], text: 'Modified PDF'),
+                  );
                 },
                 icon: const Icon(Icons.share, size: 16),
                 label: const Text('Share PDF'),

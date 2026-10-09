@@ -1,5 +1,4 @@
 // lib/features/pdf_editor_v2/domain/coordinate_converter.dart
-import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import '../data/models/pdf_text_item.dart';
 

@@ -64,21 +64,13 @@ class PdfFontMetadata {
     FontWeight weight = isBold ? FontWeight.bold : FontWeight.normal;
     FontStyle style = isItalic ? FontStyle.italic : FontStyle.normal;
 
-    String? family;
-    switch (standardFamily) {
-      case PdfStandardFontFamily.timesRoman:
-        family = 'serif';
-        break;
-      case PdfStandardFontFamily.courier:
-        family = 'monospace';
-        break;
-      case PdfStandardFontFamily.roboto:
-      case PdfStandardFontFamily.arial:
-      case PdfStandardFontFamily.helvetica:
-      default:
-        family = 'sans-serif';
-        break;
-    }
+    final String family = switch (standardFamily) {
+      PdfStandardFontFamily.timesRoman => 'serif',
+      PdfStandardFontFamily.courier => 'monospace',
+      PdfStandardFontFamily.roboto ||
+      PdfStandardFontFamily.arial ||
+      PdfStandardFontFamily.helvetica => 'sans-serif',
+    };
 
     return TextStyle(
       fontSize: fontSize * scale,

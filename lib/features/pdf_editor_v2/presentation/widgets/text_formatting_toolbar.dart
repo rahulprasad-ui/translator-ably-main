@@ -1,7 +1,6 @@
 // lib/features/pdf_editor_v2/presentation/widgets/text_formatting_toolbar.dart
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../data/models/pdf_font_metadata.dart';
 import '../providers/pdf_editor_provider.dart';
 
 /// Formatting toolbar that allows live font, size, weight, style, and color editing
