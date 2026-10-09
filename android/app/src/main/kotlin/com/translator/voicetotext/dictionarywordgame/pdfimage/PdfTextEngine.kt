@@ -290,6 +290,10 @@ class PdfTextEngine(private val context: Context) {
                         val topY = ((mod["y"] as? Number)?.toFloat() ?: 0f)
                         val w = ((mod["width"] as? Number)?.toFloat() ?: 100f)
                         val h = ((mod["height"] as? Number)?.toFloat() ?: 20f)
+                        val origX = ((mod["originalX"] as? Number)?.toFloat() ?: x)
+                        val origY = ((mod["originalY"] as? Number)?.toFloat() ?: topY)
+                        val origW = ((mod["originalWidth"] as? Number)?.toFloat() ?: w)
+                        val origH = ((mod["originalHeight"] as? Number)?.toFloat() ?: h)
                         val text = (mod["text"] as? String) ?: ""
                         val colorVal = ((mod["color"] as? Number)?.toLong() ?: 0xFF000000)
                         val bgColorVal = ((mod["backgroundColor"] as? Number)?.toLong())
@@ -298,10 +302,20 @@ class PdfTextEngine(private val context: Context) {
                         val isItalic = (mod["isItalic"] as? Boolean) ?: false
                         val coverOriginal = (mod["coverOriginal"] as? Boolean) ?: true
 
-                        // Convert top-down Y to PDF bottom-up Y
-                        val pdfY = pageHeight - topY - h
+                        // Full union erase box: covers 100% of the original bounding box + new bounding box
+                        // with margin for font ascenders, descenders (g, j, p, q, y) and raster anti-aliasing
+                        val eraseLeft = min(origX, x) - 2f
+                        val eraseTop = min(origY, topY) - 2f
+                        val eraseRight = max(origX + origW, x + w) + 4f
+                        val eraseBottom = max(origY + origH, topY + h) + 4f
 
-                        // 1. Draw whiteout / background if coverOriginal is true or bgColorVal is set
+                        val eraseW = max(10f, eraseRight - eraseLeft)
+                        val eraseH = max(10f, eraseBottom - eraseTop)
+
+                        // Convert top-down erase box to PDF bottom-up coordinates
+                        val erasePdfY = pageHeight - eraseTop - eraseH
+
+                        // 1. Draw solid clean background covering 100% of original text area
                         if (coverOriginal || (bgColorVal != null && bgColorVal != 0L)) {
                             contentStream.saveGraphicsState()
                             if (bgColorVal != null && bgColorVal != 0L) {
@@ -312,8 +326,7 @@ class PdfTextEngine(private val context: Context) {
                             } else {
                                 contentStream.setNonStrokingColor(1f, 1f, 1f) // White
                             }
-                            // Add slight margin to ensure full erasure of anti-aliasing
-                            contentStream.addRect(x - 1f, pdfY - 1f, w + 2f, h + 2f)
+                            contentStream.addRect(eraseLeft, erasePdfY, eraseW, eraseH)
                             contentStream.fill()
                             contentStream.restoreGraphicsState()
                         }
@@ -351,8 +364,8 @@ class PdfTextEngine(private val context: Context) {
                             val b = (colorVal and 0xFF) / 255f
                             contentStream.setNonStrokingColor(r, g, b)
 
-                            // Baseline placement: roughly 20-25% from bottom of the bounding box
-                            val baselineY = pdfY + (h * 0.22f).coerceAtLeast(fontSize * 0.2f)
+                            // Baseline placement aligned with the original text line
+                            val baselineY = pageHeight - (origY + origH * 0.78f)
                             contentStream.newLineAtOffset(x, baselineY)
 
                             val cleanText = sanitizePdfText(text)

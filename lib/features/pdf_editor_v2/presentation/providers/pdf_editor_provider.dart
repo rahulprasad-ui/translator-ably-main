@@ -236,15 +236,37 @@ class PdfEditorNotifier extends StateNotifier<PdfEditorState> {
     final page = state.currentPage;
     if (page == null) return;
 
-    // Detect closest matching text item
+    // Detect closest matching text item, accounting for active edits
+    final effectiveItems = page.textItems.map((item) {
+      final edit = state.editRecords.cast<TextEditRecord?>().firstWhere(
+            (e) => e != null && e.pageIndex == state.currentPageIndex && e.originalItem.id == item.id,
+            orElse: () => null,
+          );
+      if (edit != null) {
+        if (edit.replacementText.isEmpty) {
+          // Erased item: place out of hit area so it's not tapped
+          return item.copyWith(width: 0, height: 0, x: -9999, y: -9999);
+        }
+        return item.copyWith(
+          text: edit.replacementText,
+          x: edit.targetRect.left,
+          y: edit.targetRect.top,
+          width: edit.targetRect.width,
+          height: edit.targetRect.height,
+        );
+      }
+      return item;
+    }).toList();
+
     final hitItem = CoordinateConverter.hitTest(
       pagePoint,
-      page.textItems,
+      effectiveItems,
       hitSlop: 6.0,
     );
 
     if (hitItem != null) {
-      selectTextItem(hitItem);
+      final original = page.textItems.firstWhere((i) => i.id == hitItem.id, orElse: () => hitItem);
+      selectTextItem(original);
     } else {
       clearSelection();
     }
@@ -260,9 +282,16 @@ class PdfEditorNotifier extends StateNotifier<PdfEditorState> {
 
     final fontMeta = existingEdit != null ? existingEdit.appliedFont : item.fontMetadata;
     final activeText = existingEdit != null ? existingEdit.replacementText : item.text;
+    final effectiveItem = existingEdit != null
+        ? item.copyWith(
+            text: existingEdit.replacementText,
+            width: existingEdit.targetRect.width,
+            height: existingEdit.targetRect.height,
+          )
+        : item;
 
     state = state.copyWith(
-      selectedTextItem: item,
+      selectedTextItem: effectiveItem,
       currentFont: fontMeta,
       editingText: activeText,
       isEditingInline: false,
@@ -357,11 +386,17 @@ class PdfEditorNotifier extends StateNotifier<PdfEditorState> {
     if (selected == null) return;
     _pushUndoHistory();
 
-    final targetRect = Rect.fromLTWH(selected.x, selected.y, selected.width, selected.height);
+    final page = state.currentPage;
+    final originalItem = page?.textItems.firstWhere(
+          (item) => item.id == selected.id,
+          orElse: () => selected,
+        ) ?? selected;
+
+    final targetRect = Rect.fromLTWH(originalItem.x, originalItem.y, originalItem.width, originalItem.height);
     final record = TextEditRecord(
-      id: 'erase_${selected.id}_${DateTime.now().millisecondsSinceEpoch}',
+      id: 'erase_${originalItem.id}_${DateTime.now().millisecondsSinceEpoch}',
       pageIndex: state.currentPageIndex,
-      originalItem: selected,
+      originalItem: originalItem,
       replacementText: '',
       appliedFont: state.currentFont,
       targetRect: targetRect,
@@ -369,7 +404,7 @@ class PdfEditorNotifier extends StateNotifier<PdfEditorState> {
     );
 
     final updatedEdits = List<TextEditRecord>.from(state.editRecords);
-    final existingIndex = updatedEdits.indexWhere((e) => e.originalItem.id == selected.id);
+    final existingIndex = updatedEdits.indexWhere((e) => e.originalItem.id == originalItem.id);
     if (existingIndex != -1) {
       updatedEdits[existingIndex] = record;
     } else {
@@ -397,15 +432,31 @@ class PdfEditorNotifier extends StateNotifier<PdfEditorState> {
 
     _pushUndoHistory();
 
-    // Determine target bounding box based on replacement text length
-    final double textWidthRatio = newText.length / (selected.text.isNotEmpty ? selected.text.length : 1);
-    final double estimatedWidth = (selected.width * textWidthRatio).clamp(selected.width * 0.5, 600.0);
-    final targetRect = Rect.fromLTWH(selected.x, selected.y, estimatedWidth, selected.height);
+    final page = state.currentPage;
+    final originalItem = page?.textItems.firstWhere(
+          (item) => item.id == selected.id,
+          orElse: () => selected,
+        ) ?? selected;
+
+    // Determine precise target bounding box using TextPainter
+    final tp = TextPainter(
+      text: TextSpan(text: newText, style: state.currentFont.toFlutterTextStyle()),
+      textDirection: TextDirection.ltr,
+      maxLines: 1,
+    )..layout();
+    final double textWidth = tp.width;
+    final double textHeight = (tp.height > originalItem.height) ? tp.height : originalItem.height;
+    final targetRect = Rect.fromLTWH(
+      originalItem.x,
+      originalItem.y,
+      (textWidth < 12.0) ? 12.0 : textWidth,
+      textHeight,
+    );
 
     final record = TextEditRecord(
-      id: 'edit_${selected.id}_${DateTime.now().millisecondsSinceEpoch}',
+      id: 'edit_${originalItem.id}_${DateTime.now().millisecondsSinceEpoch}',
       pageIndex: state.currentPageIndex,
-      originalItem: selected,
+      originalItem: originalItem,
       replacementText: newText,
       appliedFont: state.currentFont,
       targetRect: targetRect,
@@ -414,14 +465,21 @@ class PdfEditorNotifier extends StateNotifier<PdfEditorState> {
 
     // Replace if item was already edited, otherwise append
     final updatedEdits = List<TextEditRecord>.from(state.editRecords);
-    final existingIndex = updatedEdits.indexWhere((e) => e.originalItem.id == selected.id);
+    final existingIndex = updatedEdits.indexWhere((e) => e.originalItem.id == originalItem.id);
     if (existingIndex != -1) {
       updatedEdits[existingIndex] = record;
     } else {
       updatedEdits.add(record);
     }
 
+    final updatedSelectedItem = originalItem.copyWith(
+      text: newText,
+      width: targetRect.width,
+      height: targetRect.height,
+    );
+
     state = state.copyWith(
+      selectedTextItem: updatedSelectedItem,
       editRecords: updatedEdits,
       isEditingInline: false,
       redoStack: const [],

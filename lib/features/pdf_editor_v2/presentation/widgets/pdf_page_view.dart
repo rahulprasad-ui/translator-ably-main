@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/models/pdf_page_model.dart';
 import '../../domain/coordinate_converter.dart';
+import '../../domain/entities/text_edit_record.dart';
 import '../providers/pdf_editor_provider.dart';
 import 'edit_text_dialog.dart';
 import 'editable_text_overlay.dart';
@@ -184,7 +185,7 @@ class _PdfPageViewState extends ConsumerState<PdfPageView> {
                             textItems: page.textItems,
                             selectedItem: state.selectedTextItem,
                             activeEdits: state.editsForCurrentPage,
-                            showAllTextBounds: true, // Guides around selectable text
+                            showAllTextBounds: false, // Clean Adobe-style presentation
                           ),
                         ),
                       ),
@@ -194,14 +195,35 @@ class _PdfPageViewState extends ConsumerState<PdfPageView> {
                         child: GestureDetector(
                           behavior: HitTestBehavior.translucent,
                           onDoubleTapDown: (details) {
+                            final effectiveItems = page.textItems.map((item) {
+                              final edit = state.editsForCurrentPage.cast<TextEditRecord?>().firstWhere(
+                                    (e) => e != null && e.originalItem.id == item.id,
+                                    orElse: () => null,
+                                  );
+                              if (edit != null) {
+                                if (edit.replacementText.isEmpty) {
+                                  return item.copyWith(width: 0, height: 0, x: -9999, y: -9999);
+                                }
+                                return item.copyWith(
+                                  text: edit.replacementText,
+                                  x: edit.targetRect.left,
+                                  y: edit.targetRect.top,
+                                  width: edit.targetRect.width,
+                                  height: edit.targetRect.height,
+                                );
+                              }
+                              return item;
+                            }).toList();
+
                             final hit = CoordinateConverter.hitTest(
                               details.localPosition,
-                              page.textItems,
+                              effectiveItems,
                               hitSlop: 8.0,
                             );
                             if (hit != null) {
-                              notifier.selectTextItem(hit);
-                              _openEditDialog(context, ref, hit);
+                              final original = page.textItems.firstWhere((i) => i.id == hit.id, orElse: () => hit);
+                              notifier.selectTextItem(original);
+                              _openEditDialog(context, ref, original);
                             } else {
                               // Double tap on empty canvas -> Quick zoom toggle
                               if (_currentScale < 1.3) {
@@ -212,17 +234,38 @@ class _PdfPageViewState extends ConsumerState<PdfPageView> {
                             }
                           },
                           onTapUp: (details) {
+                            final effectiveItems = page.textItems.map((item) {
+                              final edit = state.editsForCurrentPage.cast<TextEditRecord?>().firstWhere(
+                                    (e) => e != null && e.originalItem.id == item.id,
+                                    orElse: () => null,
+                                  );
+                              if (edit != null) {
+                                if (edit.replacementText.isEmpty) {
+                                  return item.copyWith(width: 0, height: 0, x: -9999, y: -9999);
+                                }
+                                return item.copyWith(
+                                  text: edit.replacementText,
+                                  x: edit.targetRect.left,
+                                  y: edit.targetRect.top,
+                                  width: edit.targetRect.width,
+                                  height: edit.targetRect.height,
+                                );
+                              }
+                              return item;
+                            }).toList();
+
                             final hit = CoordinateConverter.hitTest(
                               details.localPosition,
-                              page.textItems,
+                              effectiveItems,
                               hitSlop: 8.0,
                             );
                             if (hit != null) {
+                              final original = page.textItems.firstWhere((i) => i.id == hit.id, orElse: () => hit);
                               if (state.selectedTextItem?.id == hit.id) {
                                 // Second tap on the same text -> open editor directly!
-                                _openEditDialog(context, ref, hit);
+                                _openEditDialog(context, ref, original);
                               } else {
-                                notifier.selectTextItem(hit);
+                                notifier.selectTextItem(original);
                               }
                             } else {
                               notifier.clearSelection();

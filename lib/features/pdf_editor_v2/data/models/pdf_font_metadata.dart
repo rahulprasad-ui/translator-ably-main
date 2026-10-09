@@ -30,6 +30,7 @@ class PdfFontMetadata {
   final String fontName;
   final double fontSize;
   final int textColor; // ARGB integer, e.g. 0xFF1E293B
+  final int? backgroundColor; // Optional ARGB background color
   final bool isBold;
   final bool isItalic;
   final bool isFontEmbedded;
@@ -44,6 +45,7 @@ class PdfFontMetadata {
     this.fontName = 'Helvetica',
     this.fontSize = 14.0,
     this.textColor = 0xFF000000,
+    this.backgroundColor,
     this.isBold = false,
     this.isItalic = false,
     this.isFontEmbedded = false,
@@ -88,6 +90,7 @@ class PdfFontMetadata {
     String? fontName,
     double? fontSize,
     int? textColor,
+    int? backgroundColor,
     bool? isBold,
     bool? isItalic,
     bool? isFontEmbedded,
@@ -102,6 +105,7 @@ class PdfFontMetadata {
       fontName: fontName ?? this.fontName,
       fontSize: fontSize ?? this.fontSize,
       textColor: textColor ?? this.textColor,
+      backgroundColor: backgroundColor ?? this.backgroundColor,
       isBold: isBold ?? this.isBold,
       isItalic: isItalic ?? this.isItalic,
       isFontEmbedded: isFontEmbedded ?? this.isFontEmbedded,
@@ -118,6 +122,7 @@ class PdfFontMetadata {
     'fontName': fontName,
     'fontSize': fontSize,
     'textColor': textColor,
+    'backgroundColor': backgroundColor,
     'isBold': isBold,
     'isItalic': isItalic,
     'isFontEmbedded': isFontEmbedded,
@@ -133,6 +138,7 @@ class PdfFontMetadata {
     fontName: json['fontName'] as String? ?? 'Helvetica',
     fontSize: (json['fontSize'] as num?)?.toDouble() ?? 14.0,
     textColor: (json['textColor'] as num?)?.toInt() ?? 0xFF000000,
+    backgroundColor: (json['backgroundColor'] as num?)?.toInt(),
     isBold: json['isBold'] as bool? ?? false,
     isItalic: json['isItalic'] as bool? ?? false,
     isFontEmbedded: json['isFontEmbedded'] as bool? ?? false,

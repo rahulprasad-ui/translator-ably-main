@@ -50,12 +50,17 @@ class TextEditRecord {
       'pdfY': nativePdfY,  // bottom-up
       'width': targetRect.width,
       'height': targetRect.height,
+      'originalX': originalItem.x,
+      'originalY': originalItem.y,
+      'originalWidth': originalItem.width,
+      'originalHeight': originalItem.height,
       'fontSize': appliedFont.fontSize,
       'fontName': appliedFont.fontName,
       'color': appliedFont.textColor,
+      'backgroundColor': appliedFont.backgroundColor,
       'isBold': appliedFont.isBold,
       'isItalic': appliedFont.isItalic,
-      'coverOriginal': strategy == ReplacementStrategy.coverAndRewriteFallback,
+      'coverOriginal': true, // Always true to ensure genuine eradication of original text
     };
   }
 

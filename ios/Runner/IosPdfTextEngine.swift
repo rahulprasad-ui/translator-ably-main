@@ -132,6 +132,10 @@ class IosPdfTextEngine {
                         let topY = (mod["y"] as? Double) ?? 0.0
                         let w = (mod["width"] as? Double) ?? 100.0
                         let h = (mod["height"] as? Double) ?? 20.0
+                        let origX = (mod["originalX"] as? Double) ?? topX
+                        let origY = (mod["originalY"] as? Double) ?? topY
+                        let origW = (mod["originalWidth"] as? Double) ?? w
+                        let origH = (mod["originalHeight"] as? Double) ?? h
                         let text = (mod["replacementText"] as? String) ?? (mod["text"] as? String) ?? ""
                         let fontSize = CGFloat((mod["fontSize"] as? Double) ?? 14.0)
                         let isBold = (mod["isBold"] as? Bool) ?? false
@@ -140,10 +144,16 @@ class IosPdfTextEngine {
 
                         let targetRect = CGRect(x: topX, y: topY, width: w, height: h)
 
-                        // 1. Cover original bounding box with clean white background
+                        // 1. Cover 100% of the original bounding box + new bounding box with clean white background
+                        let eraseLeft = min(origX, topX) - 2.0
+                        let eraseTop = min(origY, topY) - 2.0
+                        let eraseRight = max(origX + origW, topX + w) + 4.0
+                        let eraseBottom = max(origY + origH, topY + h) + 4.0
+                        let eraseRect = CGRect(x: eraseLeft, y: eraseTop, width: max(10.0, eraseRight - eraseLeft), height: max(10.0, eraseBottom - eraseTop))
+
                         cgContext.saveGState()
                         cgContext.setFillColor(UIColor.white.cgColor)
-                        cgContext.fill(targetRect.insetBy(dx: -1.0, dy: -1.0))
+                        cgContext.fill(eraseRect)
                         cgContext.restoreGState()
 
                         // 2. Draw replacement text
