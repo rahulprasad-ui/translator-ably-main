@@ -144,7 +144,16 @@ class PdfTextEngine(private val context: Context) {
             for (line in lines) {
                 if (line.isEmpty()) continue
 
-                val lineText = line.joinToString("") { it.unicode }.trim()
+                val textBuilder = StringBuilder()
+                var prevEnd = -1f
+                for (g in line) {
+                    if (prevEnd > 0f && (g.x - prevEnd) > (g.fontSize * 0.18f)) {
+                        textBuilder.append(" ")
+                    }
+                    textBuilder.append(g.unicode)
+                    prevEnd = g.x + g.width
+                }
+                val lineText = textBuilder.toString().trim()
                 if (lineText.isEmpty()) continue
 
                 var minX = Float.MAX_VALUE

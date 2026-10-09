@@ -2598,8 +2598,7 @@ class _InteractivePageOverlayLayerState
   Widget build(BuildContext context) {
     return Obx(() {
       final isEditMode = widget.controller.editorMode.value == EditorMode.edit;
-      if (isEditMode &&
-          !widget.controller.detectedPageTexts.containsKey(widget.pageIndex) &&
+      if (!widget.controller.detectedPageTexts.containsKey(widget.pageIndex) &&
           !widget.controller.isDetectingText.value) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) widget.controller.detectTextOnPage(widget.pageIndex);
@@ -2619,8 +2618,8 @@ class _InteractivePageOverlayLayerState
 
         return Stack(
           children: [
-            // 1. Page Tap Listener for Edit Mode: background tap fallback
-            if (isEditMode && !widget.isDrawing)
+            // 1. Page Tap Listener for background tap fallback
+            if (!widget.isDrawing)
               Positioned.fill(
                 child: GestureDetector(
                   behavior: HitTestBehavior.opaque,
@@ -2633,6 +2632,9 @@ class _InteractivePageOverlayLayerState
                     );
 
                     if (match != null) {
+                      if (!isEditMode) {
+                        widget.controller.setEditorMode(EditorMode.edit);
+                      }
                       widget.onTapDetectedText?.call(widget.pageIndex, match, pageSize);
                       return;
                     }
@@ -2652,20 +2654,25 @@ class _InteractivePageOverlayLayerState
                           pageSize: pageSize,
                         );
                         if (match != null) {
+                          if (!isEditMode) {
+                            widget.controller.setEditorMode(EditorMode.edit);
+                          }
                           widget.onTapDetectedText?.call(widget.pageIndex, match, pageSize);
                           return;
                         }
                       }
                     }
 
-                    // Fallback: tap anywhere to insert new text
-                    widget.onTapPageToAddText?.call(widget.pageIndex, details.localPosition);
+                    // Fallback: tap anywhere in edit mode to insert new text
+                    if (isEditMode) {
+                      widget.onTapPageToAddText?.call(widget.pageIndex, details.localPosition);
+                    }
                   },
                 ),
               ),
 
-            // 2. Visual outline hints & direct tap handlers for detected original PDF words in Edit Mode
-            if (isEditMode && !widget.isDrawing) ...[
+            // 2. Visual outline hints & direct tap handlers for detected original PDF words
+            if (!widget.isDrawing) ...[
               ...((widget.controller.detectedPageTexts[widget.pageIndex] ?? const [])
                   .where((elem) => !overlays.any((o) =>
                       o.id == elem.id ||
@@ -2680,10 +2687,24 @@ class _InteractivePageOverlayLayerState
                   child: GestureDetector(
                     behavior: HitTestBehavior.opaque,
                     onTap: () {
+                      if (!isEditMode) {
+                        widget.controller.setEditorMode(EditorMode.edit);
+                      }
                       widget.onTapDetectedText?.call(widget.pageIndex, elem, pageSize);
                     },
                     child: Container(
-                      color: Colors.transparent,
+                      decoration: BoxDecoration(
+                        color: isEditMode
+                            ? const Color(0x153B82F6)
+                            : Colors.transparent,
+                        border: Border.all(
+                          color: isEditMode
+                              ? const Color(0x553B82F6)
+                              : Colors.transparent,
+                          width: 1.0,
+                        ),
+                        borderRadius: BorderRadius.circular(2),
+                      ),
                     ),
                   ),
                 );

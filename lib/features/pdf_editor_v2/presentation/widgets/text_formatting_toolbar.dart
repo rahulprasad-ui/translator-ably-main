@@ -2,6 +2,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/pdf_editor_provider.dart';
+import 'edit_text_dialog.dart';
 
 /// Formatting toolbar that allows live font, size, weight, style, and color editing
 class TextFormattingToolbar extends ConsumerWidget {
@@ -148,9 +149,27 @@ class TextFormattingToolbar extends ConsumerWidget {
             const SizedBox(width: 8),
             _buildDivider(),
 
-            // 6. Inline Edit Action Button
+            // 6. Edit Text Action Button
             ElevatedButton.icon(
-              onPressed: () => notifier.startInlineEditing(),
+              onPressed: () {
+                final item = state.selectedTextItem;
+                if (item != null) {
+                  EditTextDialog.show(
+                    context: context,
+                    initialText: state.editingText.isNotEmpty ? state.editingText : item.text,
+                    font: state.currentFont,
+                    originalItem: item,
+                    onApply: (newText, newFont) {
+                      notifier.applyTextEdit(newText: newText, font: newFont);
+                    },
+                    onDelete: () {
+                      notifier.eraseSelectedText();
+                    },
+                  );
+                } else {
+                  notifier.startInlineEditing();
+                }
+              },
               icon: const Icon(Icons.edit, size: 14),
               label: const Text('Edit Text', style: TextStyle(fontSize: 12)),
               style: ElevatedButton.styleFrom(

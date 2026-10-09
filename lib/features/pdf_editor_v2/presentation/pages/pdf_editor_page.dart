@@ -1,10 +1,12 @@
-// lib/features/pdf_editor_v2/presentation/pages/pdf_editor_page.dart
 import 'dart:io';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../../data/models/pdf_text_item.dart';
 import '../providers/pdf_editor_provider.dart';
+import '../widgets/edit_text_dialog.dart';
 import '../widgets/pdf_page_view.dart';
 import '../widgets/text_formatting_toolbar.dart';
 
@@ -83,6 +85,12 @@ class _PdfEditorContentState extends ConsumerState<_PdfEditorContent> {
           ],
         ),
         actions: [
+          // Open PDF File
+          IconButton(
+            icon: const Icon(Icons.folder_open_rounded, color: Colors.white, size: 22),
+            tooltip: 'Open PDF Document',
+            onPressed: () => _pickAndOpenPdf(context, notifier),
+          ),
           // Undo Action
           IconButton(
             icon: Icon(
@@ -131,6 +139,17 @@ class _PdfEditorContentState extends ConsumerState<_PdfEditorContent> {
           ),
         ],
       ),
+      floatingActionButton: doc != null
+          ? FloatingActionButton.extended(
+              onPressed: () => _addNewText(context, notifier, state),
+              backgroundColor: const Color(0xFFE11D48),
+              icon: const Icon(Icons.add_comment_rounded, color: Colors.white),
+              label: const Text(
+                'Add Text',
+                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+              ),
+            )
+          : null,
       body: Stack(
         children: [
           // Main Body: Document Viewport or Loading/Error State
@@ -164,6 +183,8 @@ class _PdfEditorContentState extends ConsumerState<_PdfEditorContent> {
                       onPressed: () {
                         if (widget.initialPdfPath != null) {
                           notifier.openPdf(widget.initialPdfPath!);
+                        } else {
+                          _pickAndOpenPdf(context, notifier);
                         }
                       },
                       child: const Text('Retry'),
@@ -177,10 +198,50 @@ class _PdfEditorContentState extends ConsumerState<_PdfEditorContent> {
               child: PdfPageView(page: state.currentPage!),
             )
           else
-            const Center(
-              child: Text(
-                'No PDF document open',
-                style: TextStyle(color: Colors.white70),
+            Center(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 32),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 88,
+                      height: 88,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF1E293B),
+                        shape: BoxShape.circle,
+                        border: Border.all(color: const Color(0xFFE11D48), width: 2),
+                        boxShadow: const [
+                          BoxShadow(color: Color(0x33E11D48), blurRadius: 24, spreadRadius: 4),
+                        ],
+                      ),
+                      child: const Icon(Icons.picture_as_pdf_rounded, size: 44, color: Color(0xFFE11D48)),
+                    ),
+                    const SizedBox(height: 20),
+                    const Text(
+                      'No PDF Document Open',
+                      style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'Pick a PDF document from your device to change text, fonts, colors, and layout.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Colors.white60, fontSize: 13),
+                    ),
+                    const SizedBox(height: 24),
+                    ElevatedButton.icon(
+                      onPressed: () => _pickAndOpenPdf(context, notifier),
+                      icon: const Icon(Icons.folder_open_rounded, size: 18),
+                      label: const Text('Choose PDF from Device', style: TextStyle(fontWeight: FontWeight.bold)),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFFE11D48),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 14),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
 
@@ -331,6 +392,54 @@ class _PdfEditorContentState extends ConsumerState<_PdfEditorContent> {
           Text(status, style: const TextStyle(color: Color(0xFF10B981), fontSize: 12, fontWeight: FontWeight.bold)),
         ],
       ),
+    );
+  }
+
+  Future<void> _pickAndOpenPdf(BuildContext context, dynamic notifier) async {
+    try {
+      final res = await FilePicker.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['pdf'],
+      );
+      if (res.isNotEmpty && res.first.path != null) {
+        final path = res.first.path!;
+        notifier.openPdf(path);
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(this.context).showSnackBar(
+        SnackBar(content: Text('Failed to pick PDF: $e'), backgroundColor: const Color(0xFFE11D48)),
+      );
+    }
+  }
+
+  void _addNewText(BuildContext context, dynamic notifier, dynamic state) {
+    final page = state.currentPage;
+    if (page == null) return;
+
+    final customItem = PdfTextItem(
+      id: 'custom_${DateTime.now().millisecondsSinceEpoch}',
+      text: 'Sample Text',
+      pageIndex: state.currentPageIndex,
+      x: (page.width / 2) - 60,
+      y: (page.height / 2) - 15,
+      width: 120,
+      height: 24,
+      fontSize: 16.0,
+      fontName: 'Helvetica',
+      textColor: 0xFF000000,
+    );
+
+    notifier.selectTextItem(customItem);
+
+    EditTextDialog.show(
+      context: context,
+      initialText: 'Sample Text',
+      font: customItem.fontMetadata,
+      originalItem: null,
+      onApply: (newText, newFont) {
+        notifier.applyTextEdit(newText: newText, font: newFont);
+      },
     );
   }
 }

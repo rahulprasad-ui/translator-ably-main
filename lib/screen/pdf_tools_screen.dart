@@ -6,7 +6,7 @@ import '../ads/widget/bottom_native_ad.dart';
 import '../helper/global.dart';
 import '../helper/my_dialogs.dart';
 import '../utils/strings.dart';
-import 'pdf_editor_screen.dart';
+import '../features/pdf_editor_v2/pdf_editor_v2_entry.dart';
 import 'pdf_compress_screen.dart';
 import 'pdf_merge_screen.dart';
 import 'pdf_split_screen.dart';
@@ -172,7 +172,7 @@ class _PdfToolsScreenState extends State<PdfToolsScreen> {
               child: ListView.separated(
                 scrollDirection: Axis.horizontal,
                 padding: const EdgeInsets.symmetric(horizontal: 16),
-                separatorBuilder: (_, __) => const SizedBox(width: 10),
+                separatorBuilder: (_, _) => const SizedBox(width: 10),
                 itemCount: cats.length,
                 itemBuilder: (_, i) {
                   final cat = cats[i];
@@ -301,8 +301,8 @@ class _ToolCard extends StatelessWidget {
   const _ToolCard({required this.tool, required this.index});
 
   void _onToolTap(BuildContext context, String name) {
-    if (name == Strings.editPdf.tr) {
-      Get.to(() => const PdfEditorScreen(),
+    if (name == Strings.editPdf.tr || name == Strings.editPdf) {
+      Get.to(() => PdfEditorV2.createScreen(),
           transition: Transition.rightToLeft,
           duration: const Duration(milliseconds: 280));
     } else if (name == Strings.compressPdf.tr || name == Strings.compressPdf) {

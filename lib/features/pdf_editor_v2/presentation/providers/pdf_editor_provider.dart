@@ -339,6 +339,51 @@ class PdfEditorNotifier extends StateNotifier<PdfEditorState> {
     }
   }
 
+  /// Applies replacement text and typography modifications atomically
+  void applyTextEdit({
+    required String newText,
+    required PdfFontMetadata font,
+  }) {
+    state = state.copyWith(
+      editingText: newText,
+      currentFont: font,
+    );
+    commitTextEdit();
+  }
+
+  /// Erases selected text item from the PDF
+  void eraseSelectedText() {
+    final selected = state.selectedTextItem;
+    if (selected == null) return;
+    _pushUndoHistory();
+
+    final targetRect = Rect.fromLTWH(selected.x, selected.y, selected.width, selected.height);
+    final record = TextEditRecord(
+      id: 'erase_${selected.id}_${DateTime.now().millisecondsSinceEpoch}',
+      pageIndex: state.currentPageIndex,
+      originalItem: selected,
+      replacementText: '',
+      appliedFont: state.currentFont,
+      targetRect: targetRect,
+      strategy: ReplacementStrategy.genuineStreamModification,
+    );
+
+    final updatedEdits = List<TextEditRecord>.from(state.editRecords);
+    final existingIndex = updatedEdits.indexWhere((e) => e.originalItem.id == selected.id);
+    if (existingIndex != -1) {
+      updatedEdits[existingIndex] = record;
+    } else {
+      updatedEdits.add(record);
+    }
+
+    state = state.copyWith(
+      editRecords: updatedEdits,
+      clearSelectedText: true,
+      isEditingInline: false,
+      redoStack: const [],
+    );
+  }
+
   /// Commits current inline edit to the active edit records list and updates undo history
   void commitTextEdit() {
     final selected = state.selectedTextItem;
