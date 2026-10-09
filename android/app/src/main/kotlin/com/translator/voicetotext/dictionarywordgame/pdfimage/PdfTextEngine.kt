@@ -24,7 +24,12 @@ data class TextGlyph(
     val width: Float,
     val height: Float,
     val fontSize: Float,
-    val fontName: String
+    val fontName: String,
+    val color: Int = 0xFF000000.toInt(),
+    val isBold: Boolean = false,
+    val isItalic: Boolean = false,
+    val isEmbedded: Boolean = false,
+    val rotation: Float = 0f
 )
 
 class PageTextStripper(private val targetPageIndex: Int) : PDFTextStripper() {
@@ -40,6 +45,46 @@ class PageTextStripper(private val targetPageIndex: Int) : PDFTextStripper() {
         val unicode = text.unicode
         if (unicode.isNullOrEmpty()) return
 
+        val font = text.font
+        val fontDescriptor = font?.fontDescriptor
+        val rawFontName = font?.name ?: "Helvetica"
+        val cleanFontName = if (rawFontName.contains("+") && rawFontName.indexOf("+") == 6) {
+            rawFontName.substring(7)
+        } else {
+            rawFontName
+        }
+
+        val isEmbedded = font?.isEmbedded ?: false
+        val weight = (fontDescriptor?.fontWeight as? Number)?.toFloat() ?: 400f
+        val isBold = (fontDescriptor?.isForceBold == true) ||
+                weight >= 700f ||
+                cleanFontName.contains("Bold", ignoreCase = true) ||
+                cleanFontName.contains("Black", ignoreCase = true)
+
+        val italicAngle = (fontDescriptor?.italicAngle as? Number)?.toFloat() ?: 0f
+        val isItalic = italicAngle != 0f ||
+                (fontDescriptor?.isItalic == true) ||
+                cleanFontName.contains("Italic", ignoreCase = true) ||
+                cleanFontName.contains("Oblique", ignoreCase = true)
+
+        var colorInt = 0xFF000000.toInt()
+        try {
+            val nonStroking = graphicsState?.nonStrokingColor
+            if (nonStroking != null) {
+                val cs = nonStroking.colorSpace
+                val components = nonStroking.components
+                if (components != null && components.isNotEmpty()) {
+                    val rgb = cs?.toRGB(components)
+                    if (rgb != null && rgb.size >= 3) {
+                        val r = (rgb[0] * 255f).toInt().coerceIn(0, 255)
+                        val g = (rgb[1] * 255f).toInt().coerceIn(0, 255)
+                        val b = (rgb[2] * 255f).toInt().coerceIn(0, 255)
+                        colorInt = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+
         glyphs.add(
             TextGlyph(
                 unicode = unicode,
@@ -48,7 +93,12 @@ class PageTextStripper(private val targetPageIndex: Int) : PDFTextStripper() {
                 width = text.widthDirAdj,
                 height = text.heightDir,
                 fontSize = text.fontSizeInPt,
-                fontName = text.font?.name ?: "Helvetica"
+                fontName = cleanFontName,
+                color = colorInt,
+                isBold = isBold,
+                isItalic = isItalic,
+                isEmbedded = isEmbedded,
+                rotation = text.rotation.toFloat()
             )
         )
     }
@@ -103,6 +153,11 @@ class PdfTextEngine(private val context: Context) {
                 var maxY = -Float.MAX_VALUE
                 var avgFontSize = 0f
                 val fontNames = mutableListOf<String>()
+                val colors = mutableListOf<Int>()
+                var hasBold = false
+                var hasItalic = false
+                var hasEmbedded = false
+                var rotation = 0f
 
                 for (g in line) {
                     minX = min(minX, g.x)
@@ -111,12 +166,16 @@ class PdfTextEngine(private val context: Context) {
                     maxY = max(maxY, g.y)
                     avgFontSize += g.fontSize
                     fontNames.add(g.fontName)
+                    colors.add(g.color)
+                    if (g.isBold) hasBold = true
+                    if (g.isItalic) hasItalic = true
+                    if (g.isEmbedded) hasEmbedded = true
+                    rotation = g.rotation
                 }
                 avgFontSize /= line.size
 
                 val dominantFont = fontNames.groupingBy { it }.eachCount().maxByOrNull { it.value }?.key ?: "Helvetica"
-                val isBold = dominantFont.contains("Bold", ignoreCase = true) || dominantFont.contains("Black", ignoreCase = true)
-                val isItalic = dominantFont.contains("Italic", ignoreCase = true) || dominantFont.contains("Oblique", ignoreCase = true)
+                val dominantColor = colors.groupingBy { it }.eachCount().maxByOrNull { it.value }?.key ?: 0xFF000000.toInt()
 
                 val lineW = max(10f, maxX - minX)
                 val lineH = max(10f, maxY - minY)
@@ -132,8 +191,13 @@ class PdfTextEngine(private val context: Context) {
                     "pageHeight" to pageHeight.toDouble(),
                     "fontSize" to avgFontSize.toDouble(),
                     "fontName" to dominantFont,
-                    "isBold" to isBold,
-                    "isItalic" to isItalic,
+                    "textColor" to dominantColor,
+                    "color" to dominantColor,
+                    "isBold" to hasBold,
+                    "isItalic" to hasItalic,
+                    "isFontEmbedded" to hasEmbedded,
+                    "rotation" to rotation.toDouble(),
+                    "baseline" to maxY.toDouble(),
                     "pageIndex" to pageIndex
                 )
                 result.add(item)
@@ -250,11 +314,26 @@ class PdfTextEngine(private val context: Context) {
                             contentStream.saveGraphicsState()
                             contentStream.beginText()
 
+                            val fontName = (mod["fontName"] as? String) ?: "Helvetica"
                             val font = when {
-                                isBold && isItalic -> PDType1Font.HELVETICA_BOLD_OBLIQUE
-                                isBold -> PDType1Font.HELVETICA_BOLD
-                                isItalic -> PDType1Font.HELVETICA_OBLIQUE
-                                else -> PDType1Font.HELVETICA
+                                fontName.contains("Times", ignoreCase = true) -> when {
+                                    isBold && isItalic -> PDType1Font.TIMES_BOLD_ITALIC
+                                    isBold -> PDType1Font.TIMES_BOLD
+                                    isItalic -> PDType1Font.TIMES_ITALIC
+                                    else -> PDType1Font.TIMES_ROMAN
+                                }
+                                fontName.contains("Courier", ignoreCase = true) -> when {
+                                    isBold && isItalic -> PDType1Font.COURIER_BOLD_OBLIQUE
+                                    isBold -> PDType1Font.COURIER_BOLD
+                                    isItalic -> PDType1Font.COURIER_OBLIQUE
+                                    else -> PDType1Font.COURIER
+                                }
+                                else -> when {
+                                    isBold && isItalic -> PDType1Font.HELVETICA_BOLD_OBLIQUE
+                                    isBold -> PDType1Font.HELVETICA_BOLD
+                                    isItalic -> PDType1Font.HELVETICA_OBLIQUE
+                                    else -> PDType1Font.HELVETICA
+                                }
                             }
                             contentStream.setFont(font, fontSize)
 
