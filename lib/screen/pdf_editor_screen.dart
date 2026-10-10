@@ -1531,55 +1531,6 @@ class _PdfEditorScreenState extends State<PdfEditorScreen>
             child: _buildSearchBar(),
           ),
 
-        // 3. Edit Mode Floating Badge ("Tap any content to edit" - frame_010.jpg)
-        Obx(() {
-          if (c.editorMode.value == EditorMode.edit) {
-            return Positioned(
-              top: 12,
-              left: 0,
-              right: 0,
-              child: Center(
-                child: GestureDetector(
-                  onTap: () => _showTextEditDialog(),
-                  child: Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFEFF6FF),
-                      borderRadius: BorderRadius.circular(22),
-                      border: Border.all(
-                          color: const Color(0xFF3B82F6).withOpacity(0.3)),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.blue.withOpacity(0.12),
-                          blurRadius: 10,
-                          offset: const Offset(0, 3),
-                        )
-                      ],
-                    ),
-                    child: const Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.touch_app_rounded,
-                            size: 16, color: Color(0xFF2563EB)),
-                        SizedBox(width: 6),
-                        Text(
-                          'Tap any content to edit',
-                          style: TextStyle(
-                            color: Color(0xFF1D4ED8),
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ).animate().fadeIn(duration: 250.ms).slideY(begin: -0.2),
-              ),
-            );
-          }
-          return const SizedBox.shrink();
-        }),
 
         // 4. Thumbnail Panel (Slide out)
         if (_thumbPanelOpen)
