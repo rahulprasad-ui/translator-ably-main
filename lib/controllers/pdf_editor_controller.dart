@@ -1068,7 +1068,7 @@ class PdfEditorController extends GetxController {
   }
 
   // ── Overlay management ─────────────────────────────────────────────────────
-  void addTextOverlay(
+  PdfOverlay addTextOverlay(
     int pageIndex,
     Offset position,
     String text, {
@@ -1080,7 +1080,7 @@ class PdfEditorController extends GetxController {
   }) {
     recordHistory();
     final newId = 'txt_${DateTime.now().millisecondsSinceEpoch}';
-    overlays.add(PdfOverlay(
+    final overlay = PdfOverlay(
       id: newId,
       pageIndex: pageIndex,
       type: OverlayType.text,
@@ -1092,8 +1092,10 @@ class PdfEditorController extends GetxController {
       isBold: isBold,
       textAlign: textAlign,
       fontFamily: fontFamily,
-    ));
+    );
+    overlays.add(overlay);
     selectedOverlayId.value = newId;
+    return overlay;
   }
 
   PdfOverlay replaceDetectedText({

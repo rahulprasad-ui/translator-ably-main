@@ -1888,17 +1888,20 @@ class _PdfEditorScreenState extends State<PdfEditorScreen>
                   onTapDetectedText: (pageIdx, detectedElem, pageSize) {
                     // Exact text item selection with red bounding box + in-place editing cursor
                     c.selectTextElement(detectedElem);
-                    c.selectOrStartEditingText(
+                    final overlay = c.selectOrStartEditingText(
                       pageIndex: pageIdx,
                       detectedElement: detectedElem,
                       pageSize: pageSize,
                     );
+                    c.startInlineEditing(overlay.id);
                   },
                   onTapPageToAddText: (pageIdx, tapPos) {
-                    _showTextEditDialog(
-                      pageIndex: pageIdx,
-                      initialPosition: tapPos,
+                    final overlay = c.addTextOverlay(
+                      pageIdx,
+                      tapPos,
+                      '',
                     );
+                    c.startInlineEditing(overlay.id);
                   },
                 ),
               ),
@@ -2042,14 +2045,11 @@ class _PdfEditorScreenState extends State<PdfEditorScreen>
                       c.setEditSubTab(0);
                       final selected = c.selectedOverlay;
                       if (selected != null && selected.type == OverlayType.text) {
-                        _showTextEditDialog(
-                          existingId: selected.id,
-                          initialText: selected.text,
-                        );
+                        c.startInlineEditing(selected.id);
                       } else {
                         Get.snackbar(
                           'Edit text',
-                          'Tap any text on the page to edit or replace it.',
+                          'Tap any text on the page to edit it in place.',
                           backgroundColor: Colors.black87,
                           colorText: Colors.white,
                           snackPosition: SnackPosition.TOP,
@@ -2066,7 +2066,12 @@ class _PdfEditorScreenState extends State<PdfEditorScreen>
                     isActive: activeTab == 1,
                     onTap: () {
                       c.setEditSubTab(1);
-                      _showTextEditDialog();
+                      final overlay = c.addTextOverlay(
+                        c.currentPage.value,
+                        const Offset(80, 140),
+                        '',
+                      );
+                      c.startInlineEditing(overlay.id);
                     },
                   ),
                   const SizedBox(width: 6),
@@ -2282,10 +2287,7 @@ class _PdfEditorScreenState extends State<PdfEditorScreen>
           // 7. Keyboard Edit Text Button (matches screenshot)
           InkWell(
             borderRadius: BorderRadius.circular(8),
-            onTap: () => _showTextEditDialog(
-              existingId: overlay.id,
-              initialText: overlay.text,
-            ),
+            onTap: () => c.startInlineEditing(overlay.id),
             child: const Padding(
               padding: EdgeInsets.symmetric(horizontal: 8, vertical: 6),
               child: Icon(
@@ -2469,7 +2471,14 @@ class _PdfEditorScreenState extends State<PdfEditorScreen>
           _StampBtn(
             label: '✍ Text',
             color: const Color(0xFF8B5CF6),
-            onTap: () => _showTextEditDialog(),
+            onTap: () {
+              final overlay = c.addTextOverlay(
+                c.currentPage.value,
+                const Offset(80, 140),
+                '',
+              );
+              c.startInlineEditing(overlay.id);
+            },
           ),
           IconButton(
             icon: const Icon(Icons.close_rounded, color: _subtext),
@@ -2729,10 +2738,9 @@ class _InteractivePageOverlayLayerState
                 isInlineEditing: isInlineEditing,
                 isEditMode: isEditMode,
                 onSelect: () {
-                  if (isSelected && o.type == OverlayType.text) {
+                  widget.controller.selectOverlay(o.id);
+                  if (o.type == OverlayType.text) {
                     widget.controller.startInlineEditing(o.id);
-                  } else {
-                    widget.controller.selectOverlay(o.id);
                   }
                 },
                 onStartEditing: () => widget.controller.startInlineEditing(o.id),
