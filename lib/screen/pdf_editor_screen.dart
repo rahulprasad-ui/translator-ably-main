@@ -1030,11 +1030,11 @@ class _PdfEditorScreenState extends State<PdfEditorScreen>
 
   // ── Save Handler ──────────────────────────────────────────────────────────
   Future<void> _handleSave() async {
-    final path = await c.exportWithOverlays();
+    final path = await c.saveAndReopenDocument();
     if (path != null) {
       Get.snackbar(
         'Saved Successfully!',
-        'Document permanently modified: $path',
+        'Document permanently modified & reloaded: $path',
         backgroundColor: const Color(0xFF10B981).withOpacity(.95),
         colorText: Colors.white,
         snackPosition: SnackPosition.TOP,
@@ -1042,14 +1042,11 @@ class _PdfEditorScreenState extends State<PdfEditorScreen>
         borderRadius: 14,
         duration: const Duration(seconds: 4),
       );
-      // Reopen the generated PDF using the project's PDF viewer.
-      // This validates that the updated text is part of the actual PDF and clears overlays.
-      await c.openPdf(path);
       AdHelper.showInterstitialAd(onComplete: () {});
     } else {
       Get.snackbar(
         'Export Failed',
-        'Something went wrong while saving.',
+        'Validation failed or error occurred. Original file preserved.',
         backgroundColor: const Color(0xFFEF4444).withOpacity(.95),
         colorText: Colors.white,
         snackPosition: SnackPosition.TOP,
@@ -1059,6 +1056,36 @@ class _PdfEditorScreenState extends State<PdfEditorScreen>
     }
   }
 
+  Future<bool> _confirmDiscardChanges() async {
+    if (!c.hasUnsavedChanges) return true;
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('Discard Changes?', style: TextStyle(fontWeight: FontWeight.bold)),
+        content: const Text(
+          'You have unsaved changes in this document. Are you sure you want to discard them?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Keep Editing'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFEF4444),
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Discard'),
+          ),
+        ],
+      ),
+    );
+    return result ?? false;
+  }
+
   // ── Main Build ────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
@@ -1066,12 +1093,23 @@ class _PdfEditorScreenState extends State<PdfEditorScreen>
       final isEditMode = c.editorMode.value == EditorMode.edit;
       final showPageInfo = c.pageCount.value > 0;
 
-      return Scaffold(
-        backgroundColor: _bg,
-        appBar: isEditMode
-            ? _buildEditAppBar()
-            : _buildViewAppBar(showPageInfo: showPageInfo),
-        body: _buildCurrentState(),
+      return PopScope(
+        canPop: !c.hasUnsavedChanges,
+        onPopInvokedWithResult: (didPop, result) async {
+          if (didPop) return;
+          final discard = await _confirmDiscardChanges();
+          if (discard && context.mounted) {
+            c.discardChanges();
+            Navigator.of(context).pop();
+          }
+        },
+        child: Scaffold(
+          backgroundColor: _bg,
+          appBar: isEditMode
+              ? _buildEditAppBar()
+              : _buildViewAppBar(showPageInfo: showPageInfo),
+          body: _buildCurrentState(),
+        ),
       );
     });
   }
@@ -1373,7 +1411,14 @@ class _PdfEditorScreenState extends State<PdfEditorScreen>
       shadowColor: Colors.black.withOpacity(0.08),
       leading: IconButton(
         icon: const Icon(Icons.close_rounded, color: Colors.black87, size: 24),
-        onPressed: () => c.setEditorMode(EditorMode.view),
+        onPressed: () async {
+          if (c.hasUnsavedChanges) {
+            final discard = await _confirmDiscardChanges();
+            if (!discard) return;
+            c.discardChanges();
+          }
+          c.setEditorMode(EditorMode.view);
+        },
         tooltip: 'Close Edit Mode',
       ),
       title: Row(

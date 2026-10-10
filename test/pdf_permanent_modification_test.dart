@@ -1,3 +1,5 @@
+import 'dart:convert';
+import 'dart:io';
 import 'dart:ui';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -12,16 +14,22 @@ void main() {
     late PdfEditorController controller;
     final List<MethodCall> channelCalls = [];
 
+    late Directory tempDir;
+
     setUp(() {
       Get.reset();
       channelCalls.clear();
+      tempDir = Directory.systemTemp.createTempSync('pdf_perm_test_');
+
+      final dummyPdf = File('${tempDir.path}/test_document.pdf');
+      dummyPdf.writeAsBytesSync(utf8.encode('%PDF-1.4\n%mock pdf with 100+ bytes padding 012345678901234567890123456789012345678901234567890123456789012345678901234567890\n%%EOF\n'));
 
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(
         const MethodChannel('plugins.flutter.io/path_provider'),
         (MethodCall call) async {
           if (call.method == 'getTemporaryDirectory') {
-            return '/dummy/temp';
+            return tempDir.path;
           }
           return null;
         },
@@ -33,6 +41,13 @@ void main() {
         (MethodCall call) async {
           channelCalls.add(call);
           if (call.method == 'saveModifiedPdf') {
+            final args = call.arguments as Map?;
+            final out = args?['outPath'] as String?;
+            if (out != null) {
+              final f = File(out);
+              f.parent.createSync(recursive: true);
+              f.writeAsBytesSync(utf8.encode('%PDF-1.4\n%mock modified vector pdf with 100+ bytes padding 012345678901234567890123456789012345678901234567890\n%%EOF\n'));
+            }
             return true;
           }
           if (call.method == 'extractTextElements') {
@@ -43,10 +58,13 @@ void main() {
       );
 
       controller = PdfEditorController();
-      controller.pdfPath = '/dummy/test_document.pdf';
+      controller.pdfPath = dummyPdf.path;
     });
 
     tearDown(() {
+      try {
+        tempDir.deleteSync(recursive: true);
+      } catch (_) {}
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(
         const MethodChannel('com.translator/pdf_text_engine'),
@@ -91,7 +109,7 @@ void main() {
       );
 
       final args = saveCall.arguments as Map;
-      expect(args['sourcePath'], '/dummy/test_document.pdf');
+      expect(args['sourcePath'], controller.pdfPath);
       expect(args['outPath'], contains('.pdf'));
 
       final mods = (args['modifications'] as List).cast<Map>();
