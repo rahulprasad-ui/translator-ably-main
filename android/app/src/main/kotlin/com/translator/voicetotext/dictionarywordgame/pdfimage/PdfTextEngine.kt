@@ -126,8 +126,9 @@ class PdfTextEngine(private val context: Context) {
 
             val page = document.getPage(pageIndex)
             val cropBox: PDRectangle = page.cropBox ?: page.mediaBox ?: PDRectangle(0f, 0f, 595f, 842f)
-            val pageWidth = cropBox.width
-            val pageHeight = cropBox.height
+            val pageRotation = page.rotation
+            val pageWidth = if (pageRotation == 90 || pageRotation == 270) cropBox.height else cropBox.width
+            val pageHeight = if (pageRotation == 90 || pageRotation == 270) cropBox.width else cropBox.height
 
             val stripper = PageTextStripper(pageIndex)
             stripper.writeText(document, StringWriter())

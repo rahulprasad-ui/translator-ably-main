@@ -43,6 +43,8 @@ class PdfDetectedTextElement {
   final double sourceHeight;
   final double fontSize;
   final String fontName;
+  final Color textColor;
+  final double baseline;
   final bool isBold;
   final bool isItalic;
   final bool isNativePdfText;
@@ -58,13 +60,16 @@ class PdfDetectedTextElement {
     double? sourceHeight,
     this.fontSize = 14.0,
     this.fontName = 'Helvetica',
+    this.textColor = Colors.black,
+    double? baseline,
     this.isBold = false,
     this.isItalic = false,
     this.isNativePdfText = false,
     this.pageIndex = 0,
   })  : id = id ?? 'elem_${text.hashCode}_${boundingBox.left.toInt()}_${boundingBox.top.toInt()}',
         sourceWidth = sourceWidth ?? (imageWidth ?? 1080.0),
-        sourceHeight = sourceHeight ?? (imageHeight ?? 1920.0);
+        sourceHeight = sourceHeight ?? (imageHeight ?? 1920.0),
+        baseline = baseline ?? (boundingBox.bottom);
 
   // Backward compatibility getters
   double get imageWidth => sourceWidth;
@@ -526,6 +531,8 @@ class PdfEditorController extends GetxController {
               final ph = (raw['pageHeight'] as num).toDouble();
               final fontSize = (raw['fontSize'] as num?)?.toDouble() ?? 14.0;
               final fontName = (raw['fontName'] as String?) ?? 'Helvetica';
+              final colorInt = (raw['color'] as num?)?.toInt() ?? 0xFF000000;
+              final baseline = (raw['baseline'] as num?)?.toDouble() ?? (y + h);
               final isBold = raw['isBold'] as bool? ?? false;
               final isItalic = raw['isItalic'] as bool? ?? false;
               final id = (raw['id'] as String?) ?? 'pdf_${pageIndex}_$i';
@@ -538,6 +545,8 @@ class PdfEditorController extends GetxController {
                 sourceHeight: ph,
                 fontSize: fontSize,
                 fontName: fontName,
+                textColor: Color(colorInt),
+                baseline: baseline,
                 isBold: isBold,
                 isItalic: isItalic,
                 isNativePdfText: true,
@@ -616,6 +625,7 @@ class PdfEditorController extends GetxController {
       return elements;
     } catch (e) {
       log('[PdfEditor] detectTextOnPage error: $e');
+      detectedPageTexts[pageIndex] = [];
       return [];
     } finally {
       isDetectingText.value = false;
@@ -698,7 +708,7 @@ class PdfEditorController extends GetxController {
         math.max(18.0, scaledRect.height + 4.0),
       ),
       text: detectedElement.text,
-      color: Colors.black87,
+      color: detectedElement.textColor,
       backgroundColor: Colors.white, // Covers original text seamlessly
       fontSize: displayFontSize,
       isBold: detectedElement.isBold,

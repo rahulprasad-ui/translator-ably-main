@@ -14,8 +14,9 @@ class IosPdfTextEngine {
         guard let page = doc.page(at: pageIndex) else { return [] }
 
         let bounds = page.bounds(for: .cropBox)
-        let pageHeight = bounds.height
-        let pageWidth = bounds.width
+        let pageRotation = page.rotation
+        let pageWidth = (pageRotation == 90 || pageRotation == 270) ? bounds.height : bounds.width
+        let pageHeight = (pageRotation == 90 || pageRotation == 270) ? bounds.width : bounds.height
 
         guard let attrString = page.attributedString else { return [] }
         let fullText = attrString.string
