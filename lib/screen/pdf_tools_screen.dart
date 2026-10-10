@@ -6,7 +6,7 @@ import '../ads/widget/bottom_native_ad.dart';
 import '../helper/global.dart';
 import '../helper/my_dialogs.dart';
 import '../utils/strings.dart';
-import '../features/pdf_editor_v2/pdf_editor_v2_entry.dart';
+import 'pdf_editor_screen.dart';
 import 'pdf_compress_screen.dart';
 import 'pdf_merge_screen.dart';
 import 'pdf_split_screen.dart';
@@ -302,7 +302,7 @@ class _ToolCard extends StatelessWidget {
 
   void _onToolTap(BuildContext context, String name) {
     if (name == Strings.editPdf.tr || name == Strings.editPdf) {
-      Get.to(() => PdfEditorV2.createScreen(),
+      Get.to(() => const PdfEditorScreen(),
           transition: Transition.rightToLeft,
           duration: const Duration(milliseconds: 280));
     } else if (name == Strings.compressPdf.tr || name == Strings.compressPdf) {

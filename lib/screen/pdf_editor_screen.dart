@@ -2598,7 +2598,8 @@ class _InteractivePageOverlayLayerState
   Widget build(BuildContext context) {
     return Obx(() {
       final isEditMode = widget.controller.editorMode.value == EditorMode.edit;
-      if (!widget.controller.detectedPageTexts.containsKey(widget.pageIndex) &&
+      if (isEditMode &&
+          !widget.controller.detectedPageTexts.containsKey(widget.pageIndex) &&
           !widget.controller.isDetectingText.value) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) widget.controller.detectTextOnPage(widget.pageIndex);
@@ -2618,8 +2619,8 @@ class _InteractivePageOverlayLayerState
 
         return Stack(
           children: [
-            // 1. Page Tap Listener for background tap fallback
-            if (!widget.isDrawing)
+            // 1. Page Tap Listener for Edit Mode: background tap fallback
+            if (isEditMode && !widget.isDrawing)
               Positioned.fill(
                 child: GestureDetector(
                   behavior: HitTestBehavior.opaque,
@@ -2632,9 +2633,6 @@ class _InteractivePageOverlayLayerState
                     );
 
                     if (match != null) {
-                      if (!isEditMode) {
-                        widget.controller.setEditorMode(EditorMode.edit);
-                      }
                       widget.onTapDetectedText?.call(widget.pageIndex, match, pageSize);
                       return;
                     }
@@ -2654,9 +2652,6 @@ class _InteractivePageOverlayLayerState
                           pageSize: pageSize,
                         );
                         if (match != null) {
-                          if (!isEditMode) {
-                            widget.controller.setEditorMode(EditorMode.edit);
-                          }
                           widget.onTapDetectedText?.call(widget.pageIndex, match, pageSize);
                           return;
                         }
@@ -2664,15 +2659,13 @@ class _InteractivePageOverlayLayerState
                     }
 
                     // Fallback: tap anywhere in edit mode to insert new text
-                    if (isEditMode) {
-                      widget.onTapPageToAddText?.call(widget.pageIndex, details.localPosition);
-                    }
+                    widget.onTapPageToAddText?.call(widget.pageIndex, details.localPosition);
                   },
                 ),
               ),
 
-            // 2. Visual outline hints & direct tap handlers for detected original PDF words
-            if (!widget.isDrawing) ...[
+            // 2. Visual outline hints & direct tap handlers for detected original PDF words in Edit Mode
+            if (isEditMode && !widget.isDrawing) ...[
               ...((widget.controller.detectedPageTexts[widget.pageIndex] ?? const [])
                   .where((elem) => !overlays.any((o) =>
                       o.id == elem.id ||
@@ -2687,20 +2680,13 @@ class _InteractivePageOverlayLayerState
                   child: GestureDetector(
                     behavior: HitTestBehavior.opaque,
                     onTap: () {
-                      if (!isEditMode) {
-                        widget.controller.setEditorMode(EditorMode.edit);
-                      }
                       widget.onTapDetectedText?.call(widget.pageIndex, elem, pageSize);
                     },
                     child: Container(
                       decoration: BoxDecoration(
-                        color: isEditMode
-                            ? const Color(0x153B82F6)
-                            : Colors.transparent,
+                        color: const Color(0x153B82F6),
                         border: Border.all(
-                          color: isEditMode
-                              ? const Color(0x553B82F6)
-                              : Colors.transparent,
+                          color: const Color(0x553B82F6),
                           width: 1.0,
                         ),
                         borderRadius: BorderRadius.circular(2),
@@ -3683,57 +3669,6 @@ class _EditSubTabBtn extends StatelessWidget {
   }
 }
 
-// ── Text Formatting Button ──────────────────────────────────────────────────
-class _FormattingBtn extends StatelessWidget {
-  final String label;
-  final bool isBoldText;
-  final bool isActive;
-  final VoidCallback onTap;
-  final String? tooltip;
-
-  const _FormattingBtn({
-    required this.label,
-    this.isBoldText = false,
-    this.isActive = false,
-    required this.onTap,
-    this.tooltip,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Tooltip(
-      message: tooltip ?? label,
-      child: GestureDetector(
-        onTap: onTap,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 150),
-          width: 32,
-          height: 32,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: isActive
-                ? _PdfEditorScreenState._accent
-                : const Color(0xFFF1F5F9),
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(
-              color: isActive
-                  ? _PdfEditorScreenState._accent
-                  : _PdfEditorScreenState._border,
-            ),
-          ),
-          child: Text(
-            label,
-            style: TextStyle(
-              color: isActive ? Colors.white : _PdfEditorScreenState._text,
-              fontSize: 13,
-              fontWeight: isBoldText ? FontWeight.w900 : FontWeight.w700,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
 
 // ── Stamp Button for Fill Out Mode ──────────────────────────────────────────
 class _StampBtn extends StatelessWidget {

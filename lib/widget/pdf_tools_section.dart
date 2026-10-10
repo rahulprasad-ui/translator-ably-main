@@ -4,7 +4,7 @@ import 'package:get/get.dart';
 import '../helper/global.dart';
 import '../model/pdf_tool.dart';
 import '../helper/my_dialogs.dart';
-import '../features/pdf_editor_v2/pdf_editor_v2_entry.dart';
+import '../screen/pdf_editor_screen.dart';
 import '../screen/pdf_compress_screen.dart';
 import '../screen/pdf_merge_screen.dart';
 import '../screen/pdf_split_screen.dart';
@@ -154,7 +154,7 @@ class PdfToolsSection extends StatelessWidget {
         onTap: () {
           if (name == Strings.editPdf) {
             Get.to(
-              () => PdfEditorV2.createScreen(),
+              () => const PdfEditorScreen(),
               transition: Transition.rightToLeft,
               duration: const Duration(milliseconds: 280),
             );
