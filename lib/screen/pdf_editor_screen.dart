@@ -1034,7 +1034,7 @@ class _PdfEditorScreenState extends State<PdfEditorScreen>
     if (path != null) {
       Get.snackbar(
         'Saved Successfully!',
-        'Exported to: $path',
+        'Document permanently modified: $path',
         backgroundColor: const Color(0xFF10B981).withOpacity(.95),
         colorText: Colors.white,
         snackPosition: SnackPosition.TOP,
@@ -1042,6 +1042,9 @@ class _PdfEditorScreenState extends State<PdfEditorScreen>
         borderRadius: 14,
         duration: const Duration(seconds: 4),
       );
+      // Reopen the generated PDF using the project's PDF viewer.
+      // This validates that the updated text is part of the actual PDF and clears overlays.
+      await c.openPdf(path);
       AdHelper.showInterstitialAd(onComplete: () {});
     } else {
       Get.snackbar(
@@ -1421,35 +1424,9 @@ class _PdfEditorScreenState extends State<PdfEditorScreen>
         // Save Pill Button with dropdown chevron (matches frame_010.jpg)
         Padding(
           padding: const EdgeInsets.only(right: 12, top: 8, bottom: 8),
-          child: PopupMenuButton<String>(
-            offset: const Offset(0, 42),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-            onSelected: (val) {
-              if (val == 'save') _handleSave();
-              if (val == 'share') _shareCurrentDocument();
-            },
-            itemBuilder: (ctx) => [
-              const PopupMenuItem(
-                value: 'save',
-                child: Row(
-                  children: [
-                    Icon(Icons.save_rounded, size: 18, color: _accent),
-                    SizedBox(width: 8),
-                    Text('Save Changes'),
-                  ],
-                ),
-              ),
-              const PopupMenuItem(
-                value: 'share',
-                child: Row(
-                  children: [
-                    Icon(Icons.share_rounded, size: 18, color: _accent),
-                    SizedBox(width: 8),
-                    Text('Share PDF'),
-                  ],
-                ),
-              ),
-            ],
+          child: InkWell(
+            onTap: _handleSave,
+            borderRadius: BorderRadius.circular(20),
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
               decoration: BoxDecoration(
@@ -1466,6 +1443,8 @@ class _PdfEditorScreenState extends State<PdfEditorScreen>
               child: const Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  Icon(Icons.save_rounded, color: Colors.white, size: 16),
+                  SizedBox(width: 5),
                   Text(
                     'Save',
                     style: TextStyle(
@@ -1474,9 +1453,6 @@ class _PdfEditorScreenState extends State<PdfEditorScreen>
                       fontSize: 13,
                     ),
                   ),
-                  SizedBox(width: 4),
-                  Icon(Icons.arrow_drop_down_rounded,
-                      color: Colors.white, size: 20),
                 ],
               ),
             ),
@@ -3286,7 +3262,6 @@ class _MovableOverlayWidgetState extends State<_MovableOverlayWidget> {
       final bool hasSavedEdit = widget.overlay.savedText != null &&
           widget.overlay.originalText != null &&
           widget.overlay.savedText != widget.overlay.originalText;
-      final bool showWhiteout = widget.isInlineEditing || hasSavedEdit;
 
       // Ensure color is dark and readable on white background
       Color effectiveColor = widget.overlay.color;

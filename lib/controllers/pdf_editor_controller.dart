@@ -1402,7 +1402,9 @@ class PdfEditorController extends GetxController {
           .where((o) => o.type != OverlayType.text)
           .toList();
 
-      if (textReplacements.isNotEmpty && nonTextOverlays.isEmpty) {
+      String currentWorkingPath = pdfPath!;
+
+      if (textReplacements.isNotEmpty) {
         final modifications = <Map<String, dynamic>>[];
 
         for (final o in textReplacements) {
@@ -1433,7 +1435,14 @@ class PdfEditorController extends GetxController {
             'y': pdfY,
             'width': pdfW,
             'height': pdfH,
-            'text': o.text ?? '',
+            'originalText': o.originalText ?? origElem?.text ?? '',
+            'originalX': o.originalPdfX ?? origElem?.boundingBox.left ?? pdfX,
+            'originalY': o.originalPdfY ?? origElem?.boundingBox.top ?? pdfY,
+            'originalWidth': o.originalPdfW ?? origElem?.boundingBox.width ?? pdfW,
+            'originalHeight': o.originalPdfH ?? origElem?.boundingBox.height ?? pdfH,
+            'baseline': origElem?.baseline,
+            'fontName': origElem?.fontName ?? o.fontFamily,
+            'text': o.savedText ?? o.text ?? '',
             'color': o.color.toARGB32(),
             'backgroundColor': o.backgroundColor?.toARGB32(),
             'fontSize': ptFontSize,
@@ -1443,30 +1452,37 @@ class PdfEditorController extends GetxController {
           });
         }
 
+        final targetVectorOutPath = nonTextOverlays.isEmpty
+            ? outPath
+            : '${tmpDir.path}/vector_mod_${DateTime.now().millisecondsSinceEpoch}.pdf';
+
         log('[PdfEditor] Saving ${modifications.length} modifications with native vector PDF engine...');
         final nativeSuccess = await NativePdfTextService.saveModifiedPdf(
-          sourcePath: pdfPath!,
-          outPath: outPath,
+          sourcePath: currentWorkingPath,
+          outPath: targetVectorOutPath,
           modifications: modifications,
         );
 
         if (nativeSuccess) {
-          log('[PdfEditor] Native vector PDF save succeeded: $outPath');
-          return outPath;
+          log('[PdfEditor] Native vector PDF save succeeded: $targetVectorOutPath');
+          if (nonTextOverlays.isEmpty) {
+            return targetVectorOutPath;
+          }
+          currentWorkingPath = targetVectorOutPath;
         } else {
           log('[PdfEditor] Native save returned false, falling back to isolate export...');
         }
       }
 
       // 2. Standard isolate export for drawings, signatures, images or fallback
-      final overlayData = overlays
-          .map(_encodeOverlay)
-          .toList();
+      final overlayData = (textReplacements.isNotEmpty && currentWorkingPath != pdfPath!)
+          ? nonTextOverlays.map(_encodeOverlay).toList()
+          : overlays.map(_encodeOverlay).toList();
 
       final result = await compute(
         _exportJob,
         ExportJobInput(
-          sourcePath: pdfPath!,
+          sourcePath: currentWorkingPath,
           outPath: outPath,
           overlays: overlayData,
         ),

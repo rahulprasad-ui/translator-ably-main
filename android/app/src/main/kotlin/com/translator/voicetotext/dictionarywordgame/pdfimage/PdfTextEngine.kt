@@ -3,10 +3,21 @@ package com.translator.voicetotext.dictionarywordgame.pdfimage
 import android.content.Context
 import android.graphics.Color
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
+import com.tom_roush.pdfbox.contentstream.operator.Operator
+import com.tom_roush.pdfbox.cos.COSArray
+import com.tom_roush.pdfbox.cos.COSFloat
+import com.tom_roush.pdfbox.cos.COSInteger
+import com.tom_roush.pdfbox.cos.COSName
+import com.tom_roush.pdfbox.cos.COSNumber
+import com.tom_roush.pdfbox.cos.COSString
+import com.tom_roush.pdfbox.pdfparser.PDFStreamParser
+import com.tom_roush.pdfbox.pdfwriter.ContentStreamWriter
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.pdmodel.PDPage
 import com.tom_roush.pdfbox.pdmodel.PDPageContentStream
+import com.tom_roush.pdfbox.pdmodel.PDResources
 import com.tom_roush.pdfbox.pdmodel.common.PDRectangle
+import com.tom_roush.pdfbox.pdmodel.common.PDStream
 import com.tom_roush.pdfbox.pdmodel.font.PDType1Font
 import com.tom_roush.pdfbox.pdmodel.graphics.image.PDImageXObject
 import com.tom_roush.pdfbox.text.PDFTextStripper
@@ -257,6 +268,25 @@ class PdfTextEngine(private val context: Context) {
         return lines
     }
 
+    private data class TargetTextMod(
+        val id: String,
+        val originalText: String,
+        val newText: String,
+        val origX: Float,
+        val origTopY: Float,
+        val origW: Float,
+        val origH: Float,
+        val origPdfBottomY: Float,
+        val origPdfTopY: Float,
+        val targetBaseline: Float,
+        val fontSize: Float,
+        val fontName: String,
+        val color: Long,
+        val isBold: Boolean,
+        val isItalic: Boolean,
+        var replacedCount: Int = 0
+    )
+
     fun saveModifiedPdf(
         sourcePath: String,
         outPath: String,
@@ -277,115 +307,200 @@ class PdfTextEngine(private val context: Context) {
                 val cropBox: PDRectangle = page.cropBox ?: page.mediaBox ?: PDRectangle(0f, 0f, 595f, 842f)
                 val pageHeight = cropBox.height
 
-                val contentStream = PDPageContentStream(
-                    document,
-                    page,
-                    PDPageContentStream.AppendMode.APPEND,
-                    true,
-                    true
-                )
+                // Convert modifications into TargetTextMod
+                val targetMods = pageMods.mapIndexed { idx, mod ->
+                    val x = ((mod["x"] as? Number)?.toFloat() ?: 0f)
+                    val topY = ((mod["y"] as? Number)?.toFloat() ?: 0f)
+                    val w = ((mod["width"] as? Number)?.toFloat() ?: 100f)
+                    val h = ((mod["height"] as? Number)?.toFloat() ?: 20f)
+                    val origX = ((mod["originalX"] as? Number)?.toFloat() ?: x)
+                    val origTopY = ((mod["originalY"] as? Number)?.toFloat() ?: topY)
+                    val origW = ((mod["originalWidth"] as? Number)?.toFloat() ?: w)
+                    val origH = ((mod["originalHeight"] as? Number)?.toFloat() ?: h)
+                    val text = (mod["text"] as? String) ?: ""
+                    val originalText = ((mod["originalText"] as? String) ?: "").trim()
+                    val colorVal = ((mod["color"] as? Number)?.toLong() ?: 0xFF000000)
+                    val fontSize = ((mod["fontSize"] as? Number)?.toFloat() ?: 12f)
+                    val isBold = (mod["isBold"] as? Boolean) ?: false
+                    val isItalic = (mod["isItalic"] as? Boolean) ?: false
+                    val fontName = (mod["fontName"] as? String) ?: "Helvetica"
+                    val baseline = ((mod["baseline"] as? Number)?.toFloat() ?: (origTopY + origH * 0.8f))
+                    val targetBaseline = pageHeight - baseline
 
-                try {
-                    for (mod in pageMods) {
-                        val type = (mod["type"] as? String) ?: "text"
-                        val x = ((mod["x"] as? Number)?.toFloat() ?: 0f)
-                        val topY = ((mod["y"] as? Number)?.toFloat() ?: 0f)
-                        val w = ((mod["width"] as? Number)?.toFloat() ?: 100f)
-                        val h = ((mod["height"] as? Number)?.toFloat() ?: 20f)
-                        val origX = ((mod["originalX"] as? Number)?.toFloat() ?: x)
-                        val origY = ((mod["originalY"] as? Number)?.toFloat() ?: topY)
-                        val origW = ((mod["originalWidth"] as? Number)?.toFloat() ?: w)
-                        val origH = ((mod["originalHeight"] as? Number)?.toFloat() ?: h)
-                        val text = (mod["text"] as? String) ?: ""
-                        val colorVal = ((mod["color"] as? Number)?.toLong() ?: 0xFF000000)
-                        val bgColorVal = ((mod["backgroundColor"] as? Number)?.toLong())
-                        val fontSize = ((mod["fontSize"] as? Number)?.toFloat() ?: 12f)
-                        val isBold = (mod["isBold"] as? Boolean) ?: false
-                        val isItalic = (mod["isItalic"] as? Boolean) ?: false
-                        val coverOriginal = (mod["coverOriginal"] as? Boolean) ?: true
+                    TargetTextMod(
+                        id = "mod_$idx",
+                        originalText = originalText,
+                        newText = text,
+                        origX = origX,
+                        origTopY = origTopY,
+                        origW = origW,
+                        origH = origH,
+                        origPdfBottomY = pageHeight - origTopY - origH,
+                        origPdfTopY = pageHeight - origTopY,
+                        targetBaseline = targetBaseline,
+                        fontSize = fontSize,
+                        fontName = fontName,
+                        color = colorVal,
+                        isBold = isBold,
+                        isItalic = isItalic
+                    )
+                }
 
-                        // Full union erase box: covers 100% of the original bounding box + new bounding box
-                        // with margin for font ascenders, descenders (g, j, p, q, y) and raster anti-aliasing
-                        val eraseLeft = min(origX, x) - 2f
-                        val eraseTop = min(origY, topY) - 2f
-                        val eraseRight = max(origX + origW, x + w) + 4f
-                        val eraseBottom = max(origY + origH, topY + h) + 4f
+                // 1. Parse page tokens directly from content stream
+                val parser = PDFStreamParser(page)
+                parser.parse()
+                val rawTokens = parser.tokens
+                val tokens = ArrayList<Any>(rawTokens.size + (targetMods.size * 20))
+                tokens.addAll(rawTokens)
 
-                        val eraseW = max(10f, eraseRight - eraseLeft)
-                        val eraseH = max(10f, eraseBottom - eraseTop)
+                var currentTx = 0f
+                var currentTy = 0f
 
-                        // Convert top-down erase box to PDF bottom-up coordinates
-                        val erasePdfY = pageHeight - eraseTop - eraseH
-
-                        // 1. Draw solid clean background covering 100% of original text area
-                        if (coverOriginal || (bgColorVal != null && bgColorVal != 0L)) {
-                            contentStream.saveGraphicsState()
-                            if (bgColorVal != null && bgColorVal != 0L) {
-                                val r = ((bgColorVal shr 16) and 0xFF) / 255f
-                                val g = ((bgColorVal shr 8) and 0xFF) / 255f
-                                val b = (bgColorVal and 0xFF) / 255f
-                                contentStream.setNonStrokingColor(r, g, b)
-                            } else {
-                                contentStream.setNonStrokingColor(1f, 1f, 1f) // White
+                // 2. Walk tokens, track text position, and NEUTRALIZE original text operators
+                for (i in 0 until tokens.size) {
+                    val token = tokens[i]
+                    if (token is Operator) {
+                        val opName = token.name
+                        when (opName) {
+                            "BT" -> {
+                                currentTx = 0f
+                                currentTy = 0f
                             }
-                            contentStream.addRect(eraseLeft, erasePdfY, eraseW, eraseH)
-                            contentStream.fill()
-                            contentStream.restoreGraphicsState()
-                        }
-
-                        // 2. Write new text
-                        if (type == "text" && text.isNotEmpty()) {
-                            contentStream.saveGraphicsState()
-                            contentStream.beginText()
-
-                            val fontName = (mod["fontName"] as? String) ?: "Helvetica"
-                            val font = when {
-                                fontName.contains("Times", ignoreCase = true) -> when {
-                                    isBold && isItalic -> PDType1Font.TIMES_BOLD_ITALIC
-                                    isBold -> PDType1Font.TIMES_BOLD
-                                    isItalic -> PDType1Font.TIMES_ITALIC
-                                    else -> PDType1Font.TIMES_ROMAN
-                                }
-                                fontName.contains("Courier", ignoreCase = true) -> when {
-                                    isBold && isItalic -> PDType1Font.COURIER_BOLD_OBLIQUE
-                                    isBold -> PDType1Font.COURIER_BOLD
-                                    isItalic -> PDType1Font.COURIER_OBLIQUE
-                                    else -> PDType1Font.COURIER
-                                }
-                                else -> when {
-                                    isBold && isItalic -> PDType1Font.HELVETICA_BOLD_OBLIQUE
-                                    isBold -> PDType1Font.HELVETICA_BOLD
-                                    isItalic -> PDType1Font.HELVETICA_OBLIQUE
-                                    else -> PDType1Font.HELVETICA
+                            "Tm" -> {
+                                if (i >= 2) {
+                                    val e = (tokens[i - 2] as? COSNumber)?.floatValue() ?: 0f
+                                    val f = (tokens[i - 1] as? COSNumber)?.floatValue() ?: 0f
+                                    currentTx = e
+                                    currentTy = f
                                 }
                             }
-                            contentStream.setFont(font, fontSize)
-
-                            val r = ((colorVal shr 16) and 0xFF) / 255f
-                            val g = ((colorVal shr 8) and 0xFF) / 255f
-                            val b = (colorVal and 0xFF) / 255f
-                            contentStream.setNonStrokingColor(r, g, b)
-
-                            // Baseline placement aligned with the original text line
-                            val baselineY = pageHeight - (origY + origH * 0.78f)
-                            contentStream.newLineAtOffset(x, baselineY)
-
-                            val cleanText = sanitizePdfText(text)
-                            try {
-                                contentStream.showText(cleanText)
-                            } catch (e: Exception) {
-                                // Fallback: replace unencodable characters with ascii
-                                val asciiOnly = cleanText.filter { it.code in 32..126 }
-                                contentStream.showText(asciiOnly)
+                            "Td", "TD" -> {
+                                if (i >= 2) {
+                                    val dx = (tokens[i - 2] as? COSNumber)?.floatValue() ?: 0f
+                                    val dy = (tokens[i - 1] as? COSNumber)?.floatValue() ?: 0f
+                                    currentTx += dx
+                                    currentTy += dy
+                                }
                             }
-
-                            contentStream.endText()
-                            contentStream.restoreGraphicsState()
+                            "Tj", "'" -> {
+                                if (i >= 1) {
+                                    val operand = tokens[i - 1]
+                                    if (operand is COSString) {
+                                        val str = operand.string ?: ""
+                                        val matched = findMatchingTarget(str, currentTx, currentTy, targetMods)
+                                        if (matched != null) {
+                                            tokens[i - 1] = COSString("")
+                                            matched.replacedCount++
+                                        }
+                                    }
+                                }
+                            }
+                            "TJ" -> {
+                                if (i >= 1) {
+                                    val operand = tokens[i - 1]
+                                    if (operand is COSArray) {
+                                        val str = operand.filterIsInstance<COSString>().joinToString("") { it.string ?: "" }
+                                        val matched = findMatchingTarget(str, currentTx, currentTy, targetMods)
+                                        if (matched != null) {
+                                            tokens[i - 1] = COSArray()
+                                            matched.replacedCount++
+                                        }
+                                    }
+                                }
+                            }
+                            "\"" -> {
+                                if (i >= 1) {
+                                    val operand = tokens[i - 1]
+                                    if (operand is COSString) {
+                                        val str = operand.string ?: ""
+                                        val matched = findMatchingTarget(str, currentTx, currentTy, targetMods)
+                                        if (matched != null) {
+                                            tokens[i - 1] = COSString("")
+                                            matched.replacedCount++
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
-                } finally {
-                    contentStream.close()
                 }
+
+                // 3. Ensure resources dictionary exists
+                var resources = page.resources
+                if (resources == null) {
+                    resources = PDResources()
+                    page.resources = resources
+                }
+
+                // 4. Inject clean vector replacement text directly into the page content stream
+                for (t in targetMods) {
+                    if (t.newText.isEmpty()) continue
+
+                    val font = when {
+                        t.fontName.contains("Times", ignoreCase = true) -> when {
+                            t.isBold && t.isItalic -> PDType1Font.TIMES_BOLD_ITALIC
+                            t.isBold -> PDType1Font.TIMES_BOLD
+                            t.isItalic -> PDType1Font.TIMES_ITALIC
+                            else -> PDType1Font.TIMES_ROMAN
+                        }
+                        t.fontName.contains("Courier", ignoreCase = true) -> when {
+                            t.isBold && t.isItalic -> PDType1Font.COURIER_BOLD_OBLIQUE
+                            t.isBold -> PDType1Font.COURIER_BOLD
+                            t.isItalic -> PDType1Font.COURIER_OBLIQUE
+                            else -> PDType1Font.COURIER
+                        }
+                        else -> when {
+                            t.isBold && t.isItalic -> PDType1Font.HELVETICA_BOLD_OBLIQUE
+                            t.isBold -> PDType1Font.HELVETICA_BOLD
+                            t.isItalic -> PDType1Font.HELVETICA_OBLIQUE
+                            else -> PDType1Font.HELVETICA
+                        }
+                    }
+                    val fontResName = resources.add(font)
+
+                    // Wrap in isolated graphics state
+                    tokens.add(Operator.getOperator("q"))
+
+                    // Set non-stroking text color
+                    val r = ((t.color shr 16) and 0xFF) / 255f
+                    val g = ((t.color shr 8) and 0xFF) / 255f
+                    val b = (t.color and 0xFF) / 255f
+                    tokens.add(COSFloat(r))
+                    tokens.add(COSFloat(g))
+                    tokens.add(COSFloat(b))
+                    tokens.add(Operator.getOperator("rg"))
+
+                    // Begin Text block
+                    tokens.add(Operator.getOperator("BT"))
+                    tokens.add(fontResName)
+                    tokens.add(COSFloat(t.fontSize))
+                    tokens.add(Operator.getOperator("Tf"))
+
+                    // Position text matrix at original line origin
+                    tokens.add(COSFloat(1f))
+                    tokens.add(COSFloat(0f))
+                    tokens.add(COSFloat(0f))
+                    tokens.add(COSFloat(1f))
+                    tokens.add(COSFloat(t.origX))
+                    tokens.add(COSFloat(t.targetBaseline))
+                    tokens.add(Operator.getOperator("Tm"))
+
+                    // Emit replacement text
+                    val sanitized = sanitizePdfText(t.newText)
+                    tokens.add(COSString(sanitized))
+                    tokens.add(Operator.getOperator("Tj"))
+
+                    tokens.add(Operator.getOperator("ET"))
+                    tokens.add(Operator.getOperator("Q"))
+                }
+
+                // 5. Write modified tokens back into page content stream
+                val updatedStream = PDStream(document)
+                val outStream = updatedStream.createOutputStream(COSName.FLATE_DECODE)
+                val writer = ContentStreamWriter(outStream)
+                writer.writeTokens(tokens)
+                outStream.close()
+                page.setContents(updatedStream)
             }
 
             val outFile = File(outPath)
@@ -400,6 +515,40 @@ class PdfTextEngine(private val context: Context) {
                 document?.close()
             } catch (_: Exception) {}
         }
+    }
+
+    private fun findMatchingTarget(
+        tokenStr: String,
+        tx: Float,
+        ty: Float,
+        targetMods: List<TargetTextMod>
+    ): TargetTextMod? {
+        val cleanToken = tokenStr.trim()
+        if (cleanToken.isEmpty()) return null
+
+        for (t in targetMods) {
+            val cleanOrig = t.originalText.trim()
+            val textMatch = cleanOrig.isNotEmpty() &&
+                    (cleanToken == cleanOrig ||
+                     cleanOrig.contains(cleanToken) ||
+                     cleanToken.contains(cleanOrig))
+
+            val xWithin = (tx >= (t.origX - 12f)) && (tx <= (t.origX + t.origW + 12f))
+            val yWithin = (ty >= (t.origPdfBottomY - 12f)) && (ty <= (t.origPdfTopY + 12f))
+            val posMatch = xWithin && yWithin
+
+            if (textMatch && posMatch) {
+                return t
+            } else if (textMatch && (ty == 0f || yWithin)) {
+                return t
+            } else if (posMatch && cleanOrig.isNotEmpty()) {
+                val commonPrefix = cleanToken.take(3)
+                if (cleanOrig.contains(commonPrefix, ignoreCase = true)) {
+                    return t
+                }
+            }
+        }
+        return null
     }
 
     private fun sanitizePdfText(input: String): String {
