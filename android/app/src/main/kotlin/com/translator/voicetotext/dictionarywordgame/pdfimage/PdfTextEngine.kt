@@ -170,8 +170,9 @@ class PdfTextEngine(private val context: Context) {
                 var rotation = 0f
 
                 for (g in line) {
+                    val glyphH = if (g.height > 0f) g.height else (if (g.fontSize > 0f) g.fontSize else 12f)
                     minX = min(minX, g.x)
-                    minY = min(minY, g.y - g.height)
+                    minY = min(minY, g.y - glyphH)
                     maxX = max(maxX, g.x + g.width)
                     maxY = max(maxY, g.y)
                     avgFontSize += g.fontSize

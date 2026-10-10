@@ -1492,11 +1492,10 @@ class _PdfEditorScreenState extends State<PdfEditorScreen>
       children: [
         // 1. PDF Pages List with Gestures
         GestureDetector(
+          behavior: HitTestBehavior.translucent,
           onTap: () {
             if (c.editorMode.value == EditorMode.view) {
               _toggleToolbar();
-            } else {
-              c.selectOverlay(null);
             }
           },
           child: _buildPagesList(),
@@ -1769,28 +1768,34 @@ class _PdfEditorScreenState extends State<PdfEditorScreen>
 
   // ── Pages Scroll List ─────────────────────────────────────────────────────
   Widget _buildPagesList() {
-    return NotificationListener<ScrollNotification>(
-      onNotification: (n) {
-        if (n is ScrollUpdateNotification) {
-          final pageH = MediaQuery.of(context).size.height * .85;
-          final newPage = (n.metrics.pixels / (pageH + 16)).round();
-          if (newPage >= 0 &&
-              newPage < c.pageCount.value &&
-              newPage != c.currentPage.value) {
-            c.goToPage(newPage);
+    return InteractiveViewer(
+      minScale: 1.0,
+      maxScale: 4.0,
+      panEnabled: false,
+      scaleEnabled: !_isDrawing,
+      child: NotificationListener<ScrollNotification>(
+        onNotification: (n) {
+          if (n is ScrollUpdateNotification) {
+            final pageH = MediaQuery.of(context).size.height * .85;
+            final newPage = (n.metrics.pixels / (pageH + 16)).round();
+            if (newPage >= 0 &&
+                newPage < c.pageCount.value &&
+                newPage != c.currentPage.value) {
+              c.goToPage(newPage);
+            }
           }
-        }
-        return false;
-      },
-      child: ListView.builder(
-        controller: c.scrollController,
-        padding: const EdgeInsets.fromLTRB(14, 16, 14, 120),
-        physics: _isDrawing
-            ? const NeverScrollableScrollPhysics()
-            : const BouncingScrollPhysics(),
-        scrollCacheExtent: const ScrollCacheExtent.pixels(250.0),
-        itemCount: c.pageCount.value,
-        itemBuilder: (context, index) => _buildPageItem(index),
+          return false;
+        },
+        child: ListView.builder(
+          controller: c.scrollController,
+          padding: const EdgeInsets.fromLTRB(14, 16, 14, 120),
+          physics: _isDrawing
+              ? const NeverScrollableScrollPhysics()
+              : const BouncingScrollPhysics(),
+          scrollCacheExtent: const ScrollCacheExtent.pixels(250.0),
+          itemCount: c.pageCount.value,
+          itemBuilder: (context, index) => _buildPageItem(index),
+        ),
       ),
     );
   }
@@ -1912,19 +1917,8 @@ class _PdfEditorScreenState extends State<PdfEditorScreen>
                     }
                   },
                   onTapDetectedText: (pageIdx, detectedElem, pageSize) {
-                    // Pre-select element in controller
-                    c.selectOrStartEditingText(
-                      pageIndex: pageIdx,
-                      detectedElement: detectedElem,
-                      pageSize: pageSize,
-                    );
-                    // Instant Tap-to-Edit: immediately open edit dialog with original text prefilled
-                    _showTextEditDialog(
-                      pageIndex: pageIdx,
-                      detectedElement: detectedElem,
-                      pageSize: pageSize,
-                      initialText: detectedElem.text,
-                    );
+                    // Phase 2: Exact text item selection with red outline
+                    c.selectTextElement(detectedElem);
                   },
                   onTapPageToAddText: (pageIdx, tapPos) {
                     _showTextEditDialog(
@@ -2576,11 +2570,13 @@ class _InteractivePageOverlayLayer extends StatefulWidget {
 class _InteractivePageOverlayLayerState
     extends State<_InteractivePageOverlayLayer> {
   List<Offset> _liveStrokes = [];
+  Offset? _pointerDownPos;
+  DateTime? _pointerDownTime;
 
   @override
   void initState() {
     super.initState();
-    if (widget.controller.editorMode.value == EditorMode.edit) {
+    if (!widget.controller.detectedPageTexts.containsKey(widget.pageIndex)) {
       widget.controller.detectTextOnPage(widget.pageIndex);
     }
   }
@@ -2588,9 +2584,52 @@ class _InteractivePageOverlayLayerState
   @override
   void didUpdateWidget(covariant _InteractivePageOverlayLayer oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.controller.editorMode.value == EditorMode.edit &&
-        !widget.controller.detectedPageTexts.containsKey(widget.pageIndex)) {
+    if (!widget.controller.detectedPageTexts.containsKey(widget.pageIndex)) {
       widget.controller.detectTextOnPage(widget.pageIndex);
+    }
+  }
+
+  int _lastTapTime = 0;
+
+  void _onTap(Offset localPos, Size pageSize) {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (now - _lastTapTime < 250) return;
+    _lastTapTime = now;
+    _handlePageTap(localPos, pageSize);
+  }
+
+  Future<void> _handlePageTap(Offset localPos, Size pageSize) async {
+    print('[PDF-HIT] Tap on page ${widget.pageIndex} at $localPos, available elements: ${widget.controller.detectedPageTexts[widget.pageIndex]?.length ?? 0}');
+
+    // If text was not yet detected on this page, run detection on demand
+    if (!widget.controller.detectedPageTexts.containsKey(widget.pageIndex)) {
+      await widget.controller.detectTextOnPage(widget.pageIndex);
+    }
+
+    // Check if user tapped a recognized text element in the PDF
+    final match = widget.controller.findDetectedTextAtPosition(
+      pageIndex: widget.pageIndex,
+      tapPos: localPos,
+      pageSize: pageSize,
+      tolerance: 18.0,
+    );
+
+    if (match != null) {
+      print('[PDF-HIT] Matched text: "${match.text}" at ${match.boundingBox}');
+      widget.onTapDetectedText?.call(widget.pageIndex, match, pageSize);
+      if (widget.controller.editorMode.value != EditorMode.edit) {
+        widget.controller.setEditorMode(EditorMode.edit);
+      }
+      return;
+    }
+
+    // Tapping empty space clears active text selection & overlay selection
+    if (widget.controller.selectedTextElement.value != null ||
+        widget.controller.selectedOverlayId.value != null) {
+      print('[PDF-HIT] Tapped empty space -> clearing selection');
+      widget.controller.selectTextElement(null);
+      widget.controller.selectOverlay(null);
+      return;
     }
   }
 
@@ -2598,8 +2637,7 @@ class _InteractivePageOverlayLayerState
   Widget build(BuildContext context) {
     return Obx(() {
       final isEditMode = widget.controller.editorMode.value == EditorMode.edit;
-      if (isEditMode &&
-          !widget.controller.detectedPageTexts.containsKey(widget.pageIndex) &&
+      if (!widget.controller.detectedPageTexts.containsKey(widget.pageIndex) &&
           !widget.controller.isDetectingText.value) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) widget.controller.detectTextOnPage(widget.pageIndex);
@@ -2610,8 +2648,9 @@ class _InteractivePageOverlayLayerState
 
       return LayoutBuilder(builder: (ctx, box) {
         final w = box.maxWidth;
-        final h = box.maxHeight;
-        if (w <= 0 || h <= 0 || h == double.infinity) {
+        final rawH = box.maxHeight;
+        final h = (rawH.isFinite && rawH > 0) ? rawH : (w * 1.414);
+        if (w <= 0 || h <= 0) {
           return const SizedBox.shrink();
         }
 
@@ -2619,83 +2658,46 @@ class _InteractivePageOverlayLayerState
 
         return Stack(
           children: [
-            // 1. Page Tap Listener for Edit Mode: background tap fallback
-            if (isEditMode && !widget.isDrawing)
+            // 1. Page Tap Listener: accurate hit-testing & tap handling via Listener + GestureDetector
+            if (!widget.isDrawing)
               Positioned.fill(
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTapUp: (details) async {
-                    // Check if user tapped a recognized word/line in the PDF first
-                    var match = widget.controller.findDetectedTextAtPosition(
-                      pageIndex: widget.pageIndex,
-                      tapPos: details.localPosition,
-                      pageSize: pageSize,
-                    );
-
-                    if (match != null) {
-                      widget.onTapDetectedText?.call(widget.pageIndex, match, pageSize);
-                      return;
-                    }
-
-                    if (widget.controller.selectedOverlayId.value != null) {
-                      widget.controller.selectOverlay(null);
-                      return;
-                    }
-
-                    // If text was not yet detected on this page, run detection on demand
-                    if (!widget.controller.detectedPageTexts.containsKey(widget.pageIndex)) {
-                      final list = await widget.controller.detectTextOnPage(widget.pageIndex);
-                      if (list.isNotEmpty) {
-                        match = widget.controller.findDetectedTextAtPosition(
-                          pageIndex: widget.pageIndex,
-                          tapPos: details.localPosition,
-                          pageSize: pageSize,
-                        );
-                        if (match != null) {
-                          widget.onTapDetectedText?.call(widget.pageIndex, match, pageSize);
-                          return;
-                        }
+                child: Listener(
+                  behavior: HitTestBehavior.translucent,
+                  onPointerDown: (d) {
+                    _pointerDownPos = d.localPosition;
+                    _pointerDownTime = DateTime.now();
+                  },
+                  onPointerUp: (d) {
+                    if (_pointerDownPos != null) {
+                      final dist = (d.localPosition - _pointerDownPos!).distance;
+                      final dur = DateTime.now().difference(_pointerDownTime!).inMilliseconds;
+                      if (dist < 18.0 && dur < 450) {
+                        _onTap(d.localPosition, pageSize);
                       }
                     }
-
-                    // Fallback: tap anywhere in edit mode to insert new text
-                    widget.onTapPageToAddText?.call(widget.pageIndex, details.localPosition);
                   },
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTapUp: (details) => _onTap(details.localPosition, pageSize),
+                    onTap: () {},
+                  ),
                 ),
               ),
 
-            // 2. Visual outline hints & direct tap handlers for detected original PDF words in Edit Mode
-            if (isEditMode && !widget.isDrawing) ...[
-              ...((widget.controller.detectedPageTexts[widget.pageIndex] ?? const [])
-                  .where((elem) => !overlays.any((o) =>
-                      o.id == elem.id ||
-                      o.originalDetectedElement?.id == elem.id))
-                  .map((elem) {
-                final r = elem.getScaledRect(pageSize);
-                return Positioned(
-                  left: r.left - 2,
-                  top: r.top - 2,
-                  width: math.max(26.0, r.width + 4),
-                  height: math.max(16.0, r.height + 4),
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTap: () {
-                      widget.onTapDetectedText?.call(widget.pageIndex, elem, pageSize);
-                    },
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: const Color(0x153B82F6),
-                        border: Border.all(
-                          color: const Color(0x553B82F6),
-                          width: 1.0,
-                        ),
-                        borderRadius: BorderRadius.circular(2),
-                      ),
-                    ),
+            // 2. Phase 2: Exact Text Selection Red Bounding Box Painter with Handles
+            if (!widget.isDrawing)
+              IgnorePointer(
+                child: CustomPaint(
+                  size: Size(w, h),
+                  painter: _TextSelectionPainter(
+                    selectedElement: widget.controller.selectedTextElement.value,
+                    allElements: widget.controller.detectedPageTexts[widget.pageIndex],
+                    isEditMode: isEditMode,
+                    pageIndex: widget.pageIndex,
+                    pageSize: pageSize,
                   ),
-                );
-              })),
-            ],
+                ),
+              ),
 
             // Static / Drawn overlays painter
             CustomPaint(
@@ -3269,6 +3271,93 @@ class _MovableOverlayWidgetState extends State<_MovableOverlayWidget> {
         ],
       ),
     );
+  }
+}
+
+// ── Phase 2: Exact Text Selection Painter ─────────────────────────────────────
+class _TextSelectionPainter extends CustomPainter {
+  final PdfDetectedTextElement? selectedElement;
+  final List<PdfDetectedTextElement>? allElements;
+  final bool isEditMode;
+  final int pageIndex;
+  final Size pageSize;
+
+  const _TextSelectionPainter({
+    required this.selectedElement,
+    this.allElements,
+    this.isEditMode = false,
+    required this.pageIndex,
+    required this.pageSize,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    // 1. In Edit mode, show faint bounding rectangles for all detected text blocks
+    // so user clearly sees what text can be tapped/selected (Adobe Acrobat style)
+    if (isEditMode && allElements != null) {
+      final hintPaint = Paint()
+        ..color = const Color(0xFF3B82F6).withValues(alpha: 0.16)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 0.8;
+      for (final el in allElements!) {
+        if (selectedElement != null && el.id == selectedElement!.id) continue;
+        final r = el.getScaledRect(pageSize);
+        canvas.drawRRect(RRect.fromRectAndRadius(r, const Radius.circular(2)), hintPaint);
+      }
+    }
+
+    // 2. Active selected text element: Crisp red bounding box with corner handles
+    final elem = selectedElement;
+    if (elem == null || elem.pageIndex != pageIndex) return;
+
+    final scaledRect = elem.getScaledRect(pageSize);
+    final borderRect = scaledRect.inflate(1.5);
+
+    // Subtle tint fill for selected text
+    final fillPaint = Paint()
+      ..color = _PdfEditorScreenState._selectionRed.withValues(alpha: 0.12)
+      ..style = PaintingStyle.fill;
+    canvas.drawRect(borderRect, fillPaint);
+
+    // Visible red outline around the selected text's actual bounding rectangle
+    final borderPaint = Paint()
+      ..color = _PdfEditorScreenState._selectionRed
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.8;
+    canvas.drawRect(borderRect, borderPaint);
+
+    // 4 Corner Selection Handles (Phase 2)
+    final handleFill = Paint()
+      ..color = Colors.white
+      ..style = PaintingStyle.fill;
+    final handleStroke = Paint()
+      ..color = _PdfEditorScreenState._selectionRed
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.8;
+
+    const handleRadius = 4.0;
+    final corners = [
+      borderRect.topLeft,
+      borderRect.topRight,
+      borderRect.bottomLeft,
+      borderRect.bottomRight,
+    ];
+
+    for (final corner in corners) {
+      canvas.drawCircle(corner, handleRadius, handleFill);
+      canvas.drawCircle(corner, handleRadius, handleStroke);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _TextSelectionPainter oldDelegate) {
+    return oldDelegate.selectedElement?.id != selectedElement?.id ||
+        oldDelegate.selectedElement?.pageIndex != selectedElement?.pageIndex ||
+        oldDelegate.selectedElement?.boundingBox != selectedElement?.boundingBox ||
+        oldDelegate.allElements?.length != allElements?.length ||
+        oldDelegate.isEditMode != isEditMode ||
+        oldDelegate.pageIndex != pageIndex ||
+        oldDelegate.pageSize != pageSize;
   }
 }
 

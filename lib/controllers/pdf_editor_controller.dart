@@ -447,6 +447,8 @@ class PdfEditorController extends GetxController {
   final editorMode = EditorMode.view.obs;
   final editSubTab = 0.obs; // 0: Edit text, 1: Insert text, 2: Insert Images
   final selectedOverlayId = Rx<String?>(null);
+  /// Exact text item selected in Phase 2
+  final selectedTextElement = Rx<PdfDetectedTextElement?>(null);
   final isNightMode = false.obs;
 
   // ── Undo / Redo History ───────────────────────────────────────────────────
@@ -555,19 +557,19 @@ class PdfEditorController extends GetxController {
             }
 
             if (elements.isNotEmpty) {
-              log('[PdfEditor] Extracted ${elements.length} native vector text elements on page $pageIndex');
+              print('[PdfEditor] Extracted ${elements.length} native vector text elements on page $pageIndex');
               detectedPageTexts[pageIndex] = elements;
               detectedPageTexts.refresh();
               return elements;
             }
           }
         } catch (e) {
-          log('[PdfEditor] Native text extraction exception on page $pageIndex: $e');
+          print('[PdfEditor] Native text extraction exception on page $pageIndex: $e');
         }
       }
 
       // 2. Fallback to ML Kit OCR for scanned image-only PDFs
-      log('[PdfEditor] Fallback to ML Kit OCR on page $pageIndex...');
+      print('[PdfEditor] Fallback to ML Kit OCR on page $pageIndex...');
       final pageImage = await getPageImage(pageIndex);
       if (pageImage == null || pageImage.bytes.isEmpty) return [];
 
@@ -620,11 +622,12 @@ class PdfEditorController extends GetxController {
         }
       }
 
+      print('[PdfEditor] Extracted ${elements.length} OCR text elements on page $pageIndex');
       detectedPageTexts[pageIndex] = elements;
       detectedPageTexts.refresh();
       return elements;
     } catch (e) {
-      log('[PdfEditor] detectTextOnPage error: $e');
+      print('[PdfEditor] detectTextOnPage error: $e');
       detectedPageTexts[pageIndex] = [];
       return [];
     } finally {
@@ -632,36 +635,84 @@ class PdfEditorController extends GetxController {
     }
   }
 
+  /// Exact text item hit-testing (Phase 2):
+  /// 1. Prioritizes exact bounding box containment.
+  /// 2. If multiple items contain the tap (e.g. line vs word), selects the most specific (smallest area).
+  /// 3. If tap falls just outside the boundaries, checks within [tolerance] (default 4.0 logical pts)
+  ///    and picks the closest item to the tap position, avoiding false matches across distant lines.
   PdfDetectedTextElement? findDetectedTextAtPosition({
     required int pageIndex,
     required Offset tapPos,
     required Size pageSize,
+    double tolerance = 16.0,
   }) {
     final list = detectedPageTexts[pageIndex];
     if (list == null || list.isEmpty) return null;
 
-    PdfDetectedTextElement? bestMatch;
-    double minArea = double.infinity;
+    PdfDetectedTextElement? bestExactMatch;
+    double minExactArea = double.infinity;
+
+    PdfDetectedTextElement? bestTolerantMatch;
+    double minTolerantDistance = double.infinity;
+    double minTolerantArea = double.infinity;
 
     for (final elem in list) {
       final scaled = elem.getScaledRect(pageSize);
-      final hitRect = scaled.inflate(6.0);
-      if (hitRect.contains(tapPos)) {
+
+      // Exact containment test
+      if (scaled.contains(tapPos)) {
         final area = scaled.width * scaled.height;
-        if (area < minArea) {
-          minArea = area;
-          bestMatch = elem;
+        if (area < minExactArea) {
+          minExactArea = area;
+          bestExactMatch = elem;
+        }
+      } else if (bestExactMatch == null) {
+        // Tolerant hit-test (inflated rectangle for finger precision)
+        final hitRect = Rect.fromLTRB(
+          scaled.left - math.max(tolerance, 24.0),
+          scaled.top - tolerance,
+          scaled.right + math.max(tolerance, 24.0),
+          scaled.bottom + tolerance,
+        );
+        if (hitRect.contains(tapPos)) {
+          // Distance from tap position to the closest edge of the rectangle
+          final dx = (tapPos.dx < scaled.left)
+              ? (scaled.left - tapPos.dx)
+              : (tapPos.dx > scaled.right ? tapPos.dx - scaled.right : 0.0);
+          final dy = (tapPos.dy < scaled.top)
+              ? (scaled.top - tapPos.dy)
+              : (tapPos.dy > scaled.bottom ? tapPos.dy - scaled.bottom : 0.0);
+          final dist = math.sqrt(dx * dx + dy * dy);
+          final area = scaled.width * scaled.height;
+
+          if (dist < minTolerantDistance ||
+              ((dist - minTolerantDistance).abs() < 1.0 && area < minTolerantArea)) {
+            minTolerantDistance = dist;
+            minTolerantArea = area;
+            bestTolerantMatch = elem;
+          }
         }
       }
     }
 
-    if (bestMatch != null) {
-      final scaled = bestMatch.getScaledRect(pageSize);
-      log('[PdfEditor] Hit text: "${bestMatch.text}" at tapPos: $tapPos, page: $pageIndex, '
-          'sourceBox: ${bestMatch.boundingBox}, scaledBox: $scaled, isNative: ${bestMatch.isNativePdfText}');
+    final result = bestExactMatch ?? bestTolerantMatch;
+
+    if (result != null) {
+      final scaled = result.getScaledRect(pageSize);
+      print('[PdfEditor] Hit text: "${result.text}" at tapPos: $tapPos, page: $pageIndex, '
+          'sourceBox: ${result.boundingBox}, scaledBox: $scaled, isNative: ${result.isNativePdfText}');
     }
 
-    return bestMatch;
+    return result;
+  }
+
+  /// Selects a specific detected text item (Phase 2 red bounding box selection)
+  void selectTextElement(PdfDetectedTextElement? element) {
+    selectedTextElement.value = element;
+    if (element != null) {
+      // Clear any generic overlay selection to ensure crisp single-item focus
+      selectedOverlayId.value = null;
+    }
   }
 
   /// Adobe Acrobat "Edit PDF" flow:
@@ -746,6 +797,8 @@ class PdfEditorController extends GetxController {
     _pageCache.clear();
     _thumbCache.clear();
     detectedPageTexts.clear();
+    selectedTextElement.value = null;
+    selectedOverlayId.value = null;
     try {
       _document?.close();
     } catch (_) {}
@@ -783,7 +836,8 @@ class PdfEditorController extends GetxController {
       pageCount.value = _document!.pagesCount;
       currentPage.value = 0;
       isLoading.value = false;
-      log('[PdfEditor] opened: $path | pages: ${pageCount.value}');
+      print('[PdfEditor] opened: $path | pages: ${pageCount.value}');
+      detectTextOnPage(0);
     } catch (e) {
       isLoading.value = false;
       hasError.value = true;
@@ -895,8 +949,9 @@ class PdfEditorController extends GetxController {
 
   void setEditorMode(EditorMode mode) {
     editorMode.value = mode;
-    if (mode != EditorMode.edit) {
+    if (mode == EditorMode.annotate || mode == EditorMode.sign) {
       selectedOverlayId.value = null;
+      selectedTextElement.value = null;
     } else {
       detectTextOnPage(currentPage.value);
     }
@@ -912,6 +967,9 @@ class PdfEditorController extends GetxController {
 
   void selectOverlay(String? id) {
     selectedOverlayId.value = id;
+    if (id != null) {
+      selectedTextElement.value = null;
+    }
   }
 
   // ── Overlay management ─────────────────────────────────────────────────────
