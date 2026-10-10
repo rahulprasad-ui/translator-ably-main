@@ -709,8 +709,7 @@ class PdfEditorController extends GetxController {
   /// Selects a specific detected text item (Phase 2 red bounding box selection)
   void selectTextElement(PdfDetectedTextElement? element) {
     selectedTextElement.value = element;
-    if (element != null) {
-      // Clear any generic overlay selection to ensure crisp single-item focus
+    if (element == null) {
       selectedOverlayId.value = null;
     }
   }
@@ -724,6 +723,7 @@ class PdfEditorController extends GetxController {
     required Size pageSize,
   }) {
     recordHistory();
+    selectedTextElement.value = detectedElement;
     final scaledRect = detectedElement.getScaledRect(pageSize);
 
     log('[PdfEditor] SELECT EXISTING TEXT: page=$pageIndex, text="${detectedElement.text}", '

@@ -1812,15 +1812,13 @@ class _PdfEditorScreenState extends State<PdfEditorScreen>
           color: isNight ? const Color(0xFF1E293B) : Colors.white,
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
-            color: isCurrent ? _accent : _border,
-            width: isCurrent ? 2 : 1,
+            color: _border,
+            width: 1,
           ),
           boxShadow: [
             BoxShadow(
-              color: isCurrent
-                  ? _accent.withOpacity(.22)
-                  : Colors.black.withOpacity(.06),
-              blurRadius: isCurrent ? 16 : 8,
+              color: Colors.black.withOpacity(.06),
+              blurRadius: 8,
               offset: const Offset(0, 4),
             )
           ],
@@ -1917,8 +1915,13 @@ class _PdfEditorScreenState extends State<PdfEditorScreen>
                     }
                   },
                   onTapDetectedText: (pageIdx, detectedElem, pageSize) {
-                    // Phase 2: Exact text item selection with red outline
+                    // Exact text item selection with red bounding box + in-place editing cursor
                     c.selectTextElement(detectedElem);
+                    c.selectOrStartEditingText(
+                      pageIndex: pageIdx,
+                      detectedElement: detectedElem,
+                      pageSize: pageSize,
+                    );
                   },
                   onTapPageToAddText: (pageIdx, tapPos) {
                     _showTextEditDialog(
@@ -2611,7 +2614,7 @@ class _InteractivePageOverlayLayerState
       pageIndex: widget.pageIndex,
       tapPos: localPos,
       pageSize: pageSize,
-      tolerance: 18.0,
+      tolerance: 24.0,
     );
 
     if (match != null) {
@@ -2658,33 +2661,7 @@ class _InteractivePageOverlayLayerState
 
         return Stack(
           children: [
-            // 1. Page Tap Listener: accurate hit-testing & tap handling via Listener + GestureDetector
-            if (!widget.isDrawing)
-              Positioned.fill(
-                child: Listener(
-                  behavior: HitTestBehavior.translucent,
-                  onPointerDown: (d) {
-                    _pointerDownPos = d.localPosition;
-                    _pointerDownTime = DateTime.now();
-                  },
-                  onPointerUp: (d) {
-                    if (_pointerDownPos != null) {
-                      final dist = (d.localPosition - _pointerDownPos!).distance;
-                      final dur = DateTime.now().difference(_pointerDownTime!).inMilliseconds;
-                      if (dist < 18.0 && dur < 450) {
-                        _onTap(d.localPosition, pageSize);
-                      }
-                    }
-                  },
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTapUp: (details) => _onTap(details.localPosition, pageSize),
-                    onTap: () {},
-                  ),
-                ),
-              ),
-
-            // 2. Phase 2: Exact Text Selection Red Bounding Box Painter with Handles
+            // 1. Phase 2: Exact Text Selection Red Bounding Box Painter with Handles
             if (!widget.isDrawing)
               IgnorePointer(
                 child: CustomPaint(
@@ -2695,24 +2672,56 @@ class _InteractivePageOverlayLayerState
                     isEditMode: isEditMode,
                     pageIndex: widget.pageIndex,
                     pageSize: pageSize,
+                    hasActiveOverlay: selectedId != null &&
+                        (selectedId == widget.controller.selectedTextElement.value?.id ||
+                            overlays.any((o) => o.id == selectedId && o.type == OverlayType.text)),
                   ),
                 ),
               ),
 
-            // Static / Drawn overlays painter
-            CustomPaint(
-              size: Size(w, h),
-              painter: _OverlayPainter(
-                overlays: overlays
-                    .where((o) =>
-                        o.type == OverlayType.drawing ||
-                        o.type == OverlayType.highlight)
-                    .toList(),
-                liveStrokes: _liveStrokes,
-                liveColor: widget.drawColor,
-                liveWidth: widget.strokeWidth,
+            // 2. Static / Drawn overlays painter (visual only, IgnorePointer)
+            IgnorePointer(
+              child: CustomPaint(
+                size: Size(w, h),
+                painter: _OverlayPainter(
+                  overlays: overlays
+                      .where((o) =>
+                          o.type == OverlayType.drawing ||
+                          o.type == OverlayType.highlight)
+                      .toList(),
+                  liveStrokes: _liveStrokes,
+                  liveColor: widget.drawColor,
+                  liveWidth: widget.strokeWidth,
+                ),
               ),
             ),
+
+            // 3. Page Tap Listener: accurate hit-testing & tap handling via Listener + Container
+            if (!widget.isDrawing)
+              Positioned.fill(
+                child: Listener(
+                  behavior: HitTestBehavior.opaque,
+                  onPointerDown: (d) {
+                    print('[PDF-TAP] PointerDown at ${d.localPosition}');
+                    _pointerDownPos = d.localPosition;
+                    _pointerDownTime = DateTime.now();
+                  },
+                  onPointerUp: (d) {
+                    print('[PDF-TAP] PointerUp at ${d.localPosition}');
+                    if (_pointerDownPos != null) {
+                      final dist = (d.localPosition - _pointerDownPos!).distance;
+                      final dur = DateTime.now().difference(_pointerDownTime!).inMilliseconds;
+                      print('[PDF-TAP] Tap dist=$dist, dur=$dur');
+                      if (dist < 32.0 && dur < 900) {
+                        _onTap(d.localPosition, pageSize);
+                      }
+                    }
+                  },
+                  child: Container(
+                    color: Colors.transparent,
+                  ),
+                ),
+              ),
 
             // Drawing gesture recognizer (when drawing)
             if (widget.isDrawing)
@@ -2804,6 +2813,7 @@ class _MovableOverlayWidgetState extends State<_MovableOverlayWidget> {
     _focusNode = FocusNode();
 
     if (widget.isSelected && widget.isEditMode && widget.overlay.type == OverlayType.text) {
+      _textCtrl.selection = TextSelection.collapsed(offset: _textCtrl.text.length);
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _focusNode.requestFocus();
       });
@@ -2823,6 +2833,7 @@ class _MovableOverlayWidgetState extends State<_MovableOverlayWidget> {
       _textCtrl.text = widget.overlay.text ?? '';
     }
     if (!oldWidget.isSelected && widget.isSelected && widget.isEditMode && widget.overlay.type == OverlayType.text) {
+      _textCtrl.selection = TextSelection.collapsed(offset: _textCtrl.text.length);
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _focusNode.requestFocus();
       });
@@ -2844,9 +2855,7 @@ class _MovableOverlayWidgetState extends State<_MovableOverlayWidget> {
       child: GestureDetector(
         onTap: () {
           if (widget.isEditMode) {
-            if (widget.isSelected && widget.overlay.type == OverlayType.text) {
-              widget.onDoubleTap();
-            } else {
+            if (!widget.isSelected) {
               widget.onSelect();
             }
           }
@@ -3182,45 +3191,46 @@ class _MovableOverlayWidgetState extends State<_MovableOverlayWidget> {
       // In-place inline TextField directly over the PDF text when selected
       if (widget.isSelected && widget.isEditMode) {
         return Container(
+          width: _size.width,
           padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 1),
           decoration: BoxDecoration(
             color: widget.overlay.backgroundColor ?? Colors.white,
             borderRadius: BorderRadius.circular(2),
           ),
-          child: IntrinsicWidth(
-            child: TextField(
-              controller: _textCtrl,
-              focusNode: _focusNode,
-              style: textStyle,
-              textAlign: widget.overlay.textAlign,
-              maxLines: null,
-              cursorColor: const Color(0xFFEF4444),
-              cursorWidth: 2.0,
-              decoration: const InputDecoration(
-                isDense: true,
-                contentPadding: EdgeInsets.zero,
-                border: InputBorder.none,
-                focusedBorder: InputBorder.none,
-                enabledBorder: InputBorder.none,
-                errorBorder: InputBorder.none,
-                disabledBorder: InputBorder.none,
-              ),
-              onChanged: (newText) {
-                widget.overlay.text = newText;
-                final tp = TextPainter(
-                  text: TextSpan(text: newText, style: textStyle),
-                  textDirection: TextDirection.ltr,
-                )..layout();
-                final neededWidth = math.max(_size.width, tp.width + 12.0);
-                if (neededWidth > _size.width) {
-                  setState(() {
-                    _size = Size(neededWidth, _size.height);
-                  });
-                  widget.onUpdateSize(_size);
-                }
-                Get.find<PdfEditorController>().overlays.refresh();
-              },
+          child: TextField(
+            controller: _textCtrl,
+            focusNode: _focusNode,
+            autofocus: true,
+            showCursor: true,
+            style: textStyle,
+            textAlign: widget.overlay.textAlign,
+            maxLines: null,
+            cursorColor: const Color(0xFFEF4444),
+            cursorWidth: 2.2,
+            decoration: const InputDecoration(
+              isDense: true,
+              contentPadding: EdgeInsets.zero,
+              border: InputBorder.none,
+              focusedBorder: InputBorder.none,
+              enabledBorder: InputBorder.none,
+              errorBorder: InputBorder.none,
+              disabledBorder: InputBorder.none,
             ),
+            onChanged: (newText) {
+              widget.overlay.text = newText;
+              final tp = TextPainter(
+                text: TextSpan(text: newText, style: textStyle),
+                textDirection: TextDirection.ltr,
+              )..layout();
+              final neededWidth = math.max(_size.width, tp.width + 12.0);
+              if (neededWidth > _size.width) {
+                setState(() {
+                  _size = Size(neededWidth, _size.height);
+                });
+                widget.onUpdateSize(_size);
+              }
+              Get.find<PdfEditorController>().overlays.refresh();
+            },
           ),
         );
       }
@@ -3281,6 +3291,7 @@ class _TextSelectionPainter extends CustomPainter {
   final bool isEditMode;
   final int pageIndex;
   final Size pageSize;
+  final bool hasActiveOverlay;
 
   const _TextSelectionPainter({
     required this.selectedElement,
@@ -3288,6 +3299,7 @@ class _TextSelectionPainter extends CustomPainter {
     this.isEditMode = false,
     required this.pageIndex,
     required this.pageSize,
+    this.hasActiveOverlay = false,
   });
 
   @override
@@ -3305,6 +3317,10 @@ class _TextSelectionPainter extends CustomPainter {
         canvas.drawRRect(RRect.fromRectAndRadius(r, const Radius.circular(2)), hintPaint);
       }
     }
+
+    // If active interactive overlay widget is already mounted on top,
+    // it renders its own red box, handles, and inline TextField with cursor.
+    if (hasActiveOverlay) return;
 
     // 2. Active selected text element: Crisp red bounding box with corner handles
     final elem = selectedElement;
@@ -3357,7 +3373,8 @@ class _TextSelectionPainter extends CustomPainter {
         oldDelegate.allElements?.length != allElements?.length ||
         oldDelegate.isEditMode != isEditMode ||
         oldDelegate.pageIndex != pageIndex ||
-        oldDelegate.pageSize != pageSize;
+        oldDelegate.pageSize != pageSize ||
+        oldDelegate.hasActiveOverlay != hasActiveOverlay;
   }
 }
 

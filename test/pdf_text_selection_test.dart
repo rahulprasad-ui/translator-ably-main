@@ -179,5 +179,34 @@ void main() {
       controller.selectTextElement(null);
       expect(controller.selectedTextElement.value, isNull);
     });
+
+    test('selectOrStartEditingText creates overlay, sets selectedTextElement, and syncs selection id', () {
+      final elem = PdfDetectedTextElement(
+        id: 'tech_mahindra_elem',
+        text: 'Tech Mahindra',
+        boundingBox: const Rect.fromLTWH(40, 150, 180, 20),
+        sourceWidth: 600.0,
+        sourceHeight: 800.0,
+        pageIndex: 0,
+      );
+
+      const pageSize = Size(300.0, 400.0);
+      final overlay = controller.selectOrStartEditingText(
+        pageIndex: 0,
+        detectedElement: elem,
+        pageSize: pageSize,
+      );
+
+      expect(overlay.id, 'tech_mahindra_elem');
+      expect(overlay.text, 'Tech Mahindra');
+      expect(controller.selectedTextElement.value?.id, 'tech_mahindra_elem');
+      expect(controller.selectedOverlayId.value, 'tech_mahindra_elem');
+      expect(controller.overlays.any((o) => o.id == 'tech_mahindra_elem'), isTrue);
+
+      // Deselection clears both
+      controller.selectTextElement(null);
+      expect(controller.selectedTextElement.value, isNull);
+      expect(controller.selectedOverlayId.value, isNull);
+    });
   });
 }
