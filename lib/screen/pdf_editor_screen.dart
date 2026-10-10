@@ -1910,8 +1910,7 @@ class _PdfEditorScreenState extends State<PdfEditorScreen>
                   },
                   onTapEditOverlay: (o) {
                     if (o.type == OverlayType.text) {
-                      _showTextEditDialog(
-                          existingId: o.id, initialText: o.text);
+                      c.startInlineEditing(o.id);
                     }
                   },
                   onTapDetectedText: (pageIdx, detectedElem, pageSize) {
@@ -2628,8 +2627,10 @@ class _InteractivePageOverlayLayerState
 
     // Tapping empty space clears active text selection & overlay selection
     if (widget.controller.selectedTextElement.value != null ||
-        widget.controller.selectedOverlayId.value != null) {
+        widget.controller.selectedOverlayId.value != null ||
+        widget.controller.activeEditingOverlayId.value != null) {
       print('[PDF-HIT] Tapped empty space -> clearing selection');
+      widget.controller.cancelActiveInlineEditing();
       widget.controller.selectTextElement(null);
       widget.controller.selectOverlay(null);
       return;
@@ -2749,22 +2750,27 @@ class _InteractivePageOverlayLayerState
                     o.type == OverlayType.signature)
                 .map((o) {
               final isSelected = isEditMode && (selectedId == o.id);
+              final isInlineEditing = isSelected && (widget.controller.activeEditingOverlayId.value == o.id);
               return _MovableOverlayWidget(
                 overlay: o,
                 isSelected: isSelected,
+                isInlineEditing: isInlineEditing,
                 isEditMode: isEditMode,
                 onSelect: () {
                   if (isSelected && o.type == OverlayType.text) {
-                    widget.onTapEditOverlay(o);
+                    widget.controller.startInlineEditing(o.id);
                   } else {
                     widget.controller.selectOverlay(o.id);
                   }
                 },
+                onStartEditing: () => widget.controller.startInlineEditing(o.id),
+                onSaveEditing: (newText) => widget.controller.saveInlineEditing(o.id, newText),
+                onCancelEditing: () => widget.controller.cancelInlineEditing(o.id),
                 onUpdatePos: (newPos) =>
                     widget.controller.updateOverlayPosition(o.id, newPos),
                 onUpdateSize: (newSize) =>
                     widget.controller.updateOverlaySize(o.id, newSize),
-                onDoubleTap: () => widget.onTapEditOverlay(o),
+                onDoubleTap: () => widget.controller.startInlineEditing(o.id),
               );
             }),
           ],
@@ -2778,8 +2784,12 @@ class _InteractivePageOverlayLayerState
 class _MovableOverlayWidget extends StatefulWidget {
   final PdfOverlay overlay;
   final bool isSelected;
+  final bool isInlineEditing;
   final bool isEditMode;
   final VoidCallback onSelect;
+  final VoidCallback onStartEditing;
+  final void Function(String) onSaveEditing;
+  final VoidCallback onCancelEditing;
   final void Function(Offset) onUpdatePos;
   final void Function(Size) onUpdateSize;
   final VoidCallback onDoubleTap;
@@ -2787,8 +2797,12 @@ class _MovableOverlayWidget extends StatefulWidget {
   const _MovableOverlayWidget({
     required this.overlay,
     required this.isSelected,
+    this.isInlineEditing = false,
     required this.isEditMode,
     required this.onSelect,
+    required this.onStartEditing,
+    required this.onSaveEditing,
+    required this.onCancelEditing,
     required this.onUpdatePos,
     required this.onUpdateSize,
     required this.onDoubleTap,
@@ -2809,10 +2823,12 @@ class _MovableOverlayWidgetState extends State<_MovableOverlayWidget> {
     super.initState();
     _pos = widget.overlay.position;
     _size = widget.overlay.size;
-    _textCtrl = TextEditingController(text: widget.overlay.text ?? '');
+    _textCtrl = TextEditingController(
+      text: widget.overlay.savedText ?? widget.overlay.text ?? widget.overlay.originalText ?? '',
+    );
     _focusNode = FocusNode();
 
-    if (widget.isSelected && widget.isEditMode && widget.overlay.type == OverlayType.text) {
+    if (widget.isSelected && widget.isInlineEditing && widget.overlay.type == OverlayType.text) {
       _textCtrl.selection = TextSelection.collapsed(offset: _textCtrl.text.length);
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _focusNode.requestFocus();
@@ -2829,14 +2845,19 @@ class _MovableOverlayWidgetState extends State<_MovableOverlayWidget> {
     if (oldWidget.overlay.size != widget.overlay.size) {
       _size = widget.overlay.size;
     }
-    if (oldWidget.overlay.text != widget.overlay.text && _textCtrl.text != widget.overlay.text) {
-      _textCtrl.text = widget.overlay.text ?? '';
+    if (!widget.isInlineEditing &&
+        (oldWidget.overlay.text != widget.overlay.text ||
+            oldWidget.overlay.savedText != widget.overlay.savedText)) {
+      _textCtrl.text = widget.overlay.savedText ?? widget.overlay.text ?? widget.overlay.originalText ?? '';
     }
-    if (!oldWidget.isSelected && widget.isSelected && widget.isEditMode && widget.overlay.type == OverlayType.text) {
+    if (!oldWidget.isInlineEditing && widget.isInlineEditing && widget.overlay.type == OverlayType.text) {
+      _textCtrl.text = widget.overlay.savedText ?? widget.overlay.text ?? widget.overlay.originalText ?? '';
       _textCtrl.selection = TextSelection.collapsed(offset: _textCtrl.text.length);
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _focusNode.requestFocus();
       });
+    } else if (oldWidget.isInlineEditing && !widget.isInlineEditing) {
+      _focusNode.unfocus();
     }
   }
 
@@ -2849,6 +2870,9 @@ class _MovableOverlayWidgetState extends State<_MovableOverlayWidget> {
 
   @override
   Widget build(BuildContext context) {
+    final isNearTop = _pos.dy < 60;
+    final toolbarTop = isNearTop ? (_size.height + 24.0) : -54.0;
+
     return Positioned(
       left: _pos.dx,
       top: _pos.dy,
@@ -2857,13 +2881,18 @@ class _MovableOverlayWidgetState extends State<_MovableOverlayWidget> {
           if (widget.isEditMode) {
             if (!widget.isSelected) {
               widget.onSelect();
+            } else if (!widget.isInlineEditing && widget.overlay.type == OverlayType.text) {
+              // Tapping selected text again opens inline editing
+              widget.onStartEditing();
             }
           }
         },
         onDoubleTap: () {
-          if (widget.isEditMode) widget.onDoubleTap();
+          if (widget.isEditMode && widget.overlay.type == OverlayType.text) {
+            widget.onStartEditing();
+          }
         },
-        onPanUpdate: widget.isEditMode && widget.isSelected
+        onPanUpdate: widget.isEditMode && widget.isSelected && !widget.isInlineEditing
             ? (details) {
                 setState(() {
                   _pos += details.delta;
@@ -2878,7 +2907,7 @@ class _MovableOverlayWidgetState extends State<_MovableOverlayWidget> {
             Container(
               width: _size.width,
               constraints: BoxConstraints(minHeight: _size.height),
-              padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 1),
+              padding: const EdgeInsets.symmetric(horizontal: 1, vertical: 0.5),
               decoration: BoxDecoration(
                 // When selected: precise Adobe Acrobat red rectangular bounding box
                 border: widget.isSelected
@@ -2892,10 +2921,10 @@ class _MovableOverlayWidgetState extends State<_MovableOverlayWidget> {
               child: _buildContent(),
             ),
 
-            // ── Floating Action Context Toolbar (matches Screenshot 1) ─────────────────
+            // ── Floating Action Context Toolbar ─────────────────
             if (widget.isSelected && widget.overlay.type == OverlayType.text)
               Positioned(
-                top: -54,
+                top: toolbarTop,
                 left: math.max(-20.0, (_size.width / 2) - 160),
                 child: Material(
                   elevation: 6,
@@ -2910,104 +2939,185 @@ class _MovableOverlayWidgetState extends State<_MovableOverlayWidget> {
                       borderRadius: BorderRadius.circular(12),
                       border: Border.all(color: const Color(0xFFE2E8F0)),
                     ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        // 1. Edit
-                        _buildFloatingBtn(
-                          iconWidget: const Icon(Icons.edit_outlined, size: 17, color: Color(0xFF1E293B)),
-                          label: 'Edit',
-                          onTap: widget.onDoubleTap,
-                        ),
-                        _buildFloatingDivider(),
-
-                        // 2. Size (e.g. 8.4)
-                        _buildFloatingBtn(
-                          iconWidget: Text(
-                            widget.overlay.fontSize.toStringAsFixed(1),
-                            style: const TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w700,
-                              color: Color(0xFF1E293B),
-                            ),
-                          ),
-                          label: 'Size',
-                          onTap: () {
-                            Get.find<PdfEditorController>().increaseFontSize(widget.overlay.id);
-                          },
-                        ),
-                        _buildFloatingDivider(),
-
-                        // 3. Bold
-                        _buildFloatingBtn(
-                          iconWidget: Text(
-                            'B',
-                            style: TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w900,
-                              color: widget.overlay.isBold ? const Color(0xFF2563EB) : const Color(0xFF1E293B),
-                            ),
-                          ),
-                          label: 'Bold',
-                          isActive: widget.overlay.isBold,
-                          onTap: () {
-                            Get.find<PdfEditorController>().toggleBold(widget.overlay.id);
-                          },
-                        ),
-                        _buildFloatingDivider(),
-
-                        // 4. Color
-                        _buildFloatingBtn(
-                          iconWidget: Row(
+                    child: widget.isInlineEditing
+                        ? Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              Column(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  const Text('A', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Color(0xFF1E293B))),
-                                  Container(
-                                    width: 12,
-                                    height: 2.0,
-                                    color: widget.overlay.color,
-                                  ),
-                                ],
+                              // Save Action (Phase 3)
+                              _buildFloatingBtn(
+                                iconWidget: const Icon(Icons.check_circle_rounded, size: 19, color: Color(0xFF16A34A)),
+                                label: 'Save',
+                                isActive: true,
+                                onTap: () => widget.onSaveEditing(_textCtrl.text),
                               ),
-                              const Icon(Icons.arrow_drop_down, size: 13, color: Color(0xFF64748B)),
+                              _buildFloatingDivider(),
+
+                              // Cancel Action (Phase 3)
+                              _buildFloatingBtn(
+                                iconWidget: const Icon(Icons.cancel_rounded, size: 19, color: Color(0xFFDC2626)),
+                                label: 'Cancel',
+                                onTap: () {
+                                  _textCtrl.text = widget.overlay.savedText ?? widget.overlay.originalText ?? '';
+                                  widget.onCancelEditing();
+                                },
+                              ),
+                              _buildFloatingDivider(),
+
+                              // Font Size
+                              _buildFloatingBtn(
+                                iconWidget: Text(
+                                  widget.overlay.fontSize.toStringAsFixed(1),
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w700,
+                                    color: Color(0xFF1E293B),
+                                  ),
+                                ),
+                                label: 'Size',
+                                onTap: () {
+                                  Get.find<PdfEditorController>().increaseFontSize(widget.overlay.id);
+                                },
+                              ),
+                              _buildFloatingDivider(),
+
+                              // Bold
+                              _buildFloatingBtn(
+                                iconWidget: Text(
+                                  'B',
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w900,
+                                    color: widget.overlay.isBold ? const Color(0xFF2563EB) : const Color(0xFF1E293B),
+                                  ),
+                                ),
+                                label: 'Bold',
+                                isActive: widget.overlay.isBold,
+                                onTap: () {
+                                  Get.find<PdfEditorController>().toggleBold(widget.overlay.id);
+                                },
+                              ),
+                              _buildFloatingDivider(),
+
+                              // Color
+                              _buildFloatingBtn(
+                                iconWidget: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        const Text('A', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Color(0xFF1E293B))),
+                                        Container(
+                                          width: 12,
+                                          height: 2.0,
+                                          color: widget.overlay.color,
+                                        ),
+                                      ],
+                                    ),
+                                    const Icon(Icons.arrow_drop_down, size: 13, color: Color(0xFF64748B)),
+                                  ],
+                                ),
+                                label: 'Color',
+                                onTap: () => _showColorPalette(context),
+                              ),
+                            ],
+                          )
+                        : Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              // 1. Edit (opens inline editing)
+                              _buildFloatingBtn(
+                                iconWidget: const Icon(Icons.edit_outlined, size: 17, color: Color(0xFF1E293B)),
+                                label: 'Edit',
+                                onTap: widget.onStartEditing,
+                              ),
+                              _buildFloatingDivider(),
+
+                              // 2. Size
+                              _buildFloatingBtn(
+                                iconWidget: Text(
+                                  widget.overlay.fontSize.toStringAsFixed(1),
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w700,
+                                    color: Color(0xFF1E293B),
+                                  ),
+                                ),
+                                label: 'Size',
+                                onTap: () {
+                                  Get.find<PdfEditorController>().increaseFontSize(widget.overlay.id);
+                                },
+                              ),
+                              _buildFloatingDivider(),
+
+                              // 3. Bold
+                              _buildFloatingBtn(
+                                iconWidget: Text(
+                                  'B',
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w900,
+                                    color: widget.overlay.isBold ? const Color(0xFF2563EB) : const Color(0xFF1E293B),
+                                  ),
+                                ),
+                                label: 'Bold',
+                                isActive: widget.overlay.isBold,
+                                onTap: () {
+                                  Get.find<PdfEditorController>().toggleBold(widget.overlay.id);
+                                },
+                              ),
+                              _buildFloatingDivider(),
+
+                              // 4. Color
+                              _buildFloatingBtn(
+                                iconWidget: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        const Text('A', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Color(0xFF1E293B))),
+                                        Container(
+                                          width: 12,
+                                          height: 2.0,
+                                          color: widget.overlay.color,
+                                        ),
+                                      ],
+                                    ),
+                                    const Icon(Icons.arrow_drop_down, size: 13, color: Color(0xFF64748B)),
+                                  ],
+                                ),
+                                label: 'Color',
+                                onTap: () => _showColorPalette(context),
+                              ),
+                              _buildFloatingDivider(),
+
+                              // 5. Duplicate
+                              _buildFloatingBtn(
+                                iconWidget: const Icon(Icons.copy_rounded, size: 16, color: Color(0xFF1E293B)),
+                                label: 'Duplicate',
+                                onTap: () {
+                                  Get.find<PdfEditorController>().duplicateOverlay(widget.overlay.id);
+                                },
+                              ),
+                              _buildFloatingDivider(),
+
+                              // 6. Delete
+                              _buildFloatingBtn(
+                                iconWidget: const Icon(Icons.delete_outline_rounded, size: 17, color: Color(0xFFEF4444)),
+                                label: 'Delete',
+                                onTap: () {
+                                  Get.find<PdfEditorController>().removeOverlay(widget.overlay.id);
+                                },
+                              ),
                             ],
                           ),
-                          label: 'Color',
-                          onTap: () {
-                            _showColorPalette(context);
-                          },
-                        ),
-                        _buildFloatingDivider(),
-
-                        // 5. Duplicate
-                        _buildFloatingBtn(
-                          iconWidget: const Icon(Icons.copy_rounded, size: 16, color: Color(0xFF1E293B)),
-                          label: 'Duplicate',
-                          onTap: () {
-                            Get.find<PdfEditorController>().duplicateOverlay(widget.overlay.id);
-                          },
-                        ),
-                        _buildFloatingDivider(),
-
-                        // 6. Delete
-                        _buildFloatingBtn(
-                          iconWidget: const Icon(Icons.delete_outline_rounded, size: 17, color: Color(0xFFEF4444)),
-                          label: 'Delete',
-                          onTap: () {
-                            Get.find<PdfEditorController>().removeOverlay(widget.overlay.id);
-                          },
-                        ),
-                      ],
-                    ),
                   ),
                 ),
               ),
 
-            // Selection Handles (Left & Right circular, Bottom teardrop - frame_020, frame_040)
-            if (widget.isSelected) ...[
+            // Selection Handles (shown only in selection mode, not while typing)
+            if (widget.isSelected && !widget.isInlineEditing) ...[
               // Left Middle Circular Handle
               Positioned(
                 left: -7,
@@ -3015,7 +3125,7 @@ class _MovableOverlayWidgetState extends State<_MovableOverlayWidget> {
                 child: GestureDetector(
                   onPanUpdate: (d) {
                     setState(() {
-                      final newWidth = (_size.width - d.delta.dx).clamp(60.0, 500.0);
+                      final newWidth = (_size.width - d.delta.dx).clamp(40.0, 500.0);
                       _pos = Offset(_pos.dx + d.delta.dx, _pos.dy);
                       _size = Size(newWidth, _size.height);
                     });
@@ -3033,7 +3143,7 @@ class _MovableOverlayWidgetState extends State<_MovableOverlayWidget> {
                 child: GestureDetector(
                   onPanUpdate: (d) {
                     setState(() {
-                      final newWidth = (_size.width + d.delta.dx).clamp(60.0, 500.0);
+                      final newWidth = (_size.width + d.delta.dx).clamp(40.0, 500.0);
                       _size = Size(newWidth, _size.height);
                     });
                     widget.onUpdateSize(_size);
@@ -3042,47 +3152,46 @@ class _MovableOverlayWidgetState extends State<_MovableOverlayWidget> {
                 ),
               ),
 
-              // Bottom Teardrop / Pin Handle (matches frame_020, frame_040 & Screenshot 2)
-              Positioned(
-                left: (_size.width / 2) - 8,
-                bottom: -22,
-                child: GestureDetector(
-                  onPanUpdate: (d) {
-                    setState(() {
-                      final newHeight = (_size.height + d.delta.dy).clamp(30.0, 400.0);
-                      _size = Size(_size.width, newHeight);
-                    });
-                    widget.onUpdateSize(_size);
-                  },
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      // Connector stem
-                      Container(
-                        width: 1.6,
-                        height: 6,
-                        color: const Color(0xFFEF4444),
-                      ),
-                      // Red pin / teardrop circle
-                      Container(
-                        width: 14,
-                        height: 14,
-                        decoration: BoxDecoration(
+              // Bottom Teardrop / Pin Handle
+              if (!isNearTop)
+                Positioned(
+                  left: (_size.width / 2) - 8,
+                  bottom: -22,
+                  child: GestureDetector(
+                    onPanUpdate: (d) {
+                      setState(() {
+                        final newHeight = (_size.height + d.delta.dy).clamp(24.0, 400.0);
+                        _size = Size(_size.width, newHeight);
+                      });
+                      widget.onUpdateSize(_size);
+                    },
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          width: 1.6,
+                          height: 6,
                           color: const Color(0xFFEF4444),
-                          shape: BoxShape.circle,
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.red.withValues(alpha: 0.35),
-                              blurRadius: 4,
-                              offset: const Offset(0, 1),
-                            )
-                          ],
                         ),
-                      ),
-                    ],
+                        Container(
+                          width: 14,
+                          height: 14,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFEF4444),
+                            shape: BoxShape.circle,
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.red.withValues(alpha: 0.35),
+                                blurRadius: 4,
+                                offset: const Offset(0, 1),
+                              )
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
-              ),
             ],
           ],
         ),
@@ -3174,11 +3283,20 @@ class _MovableOverlayWidgetState extends State<_MovableOverlayWidget> {
 
   Widget _buildContent() {
     if (widget.overlay.type == OverlayType.text) {
-      final isWhiteout = widget.overlay.backgroundColor != null &&
-          widget.overlay.backgroundColor != Colors.transparent;
+      final bool hasSavedEdit = widget.overlay.savedText != null &&
+          widget.overlay.originalText != null &&
+          widget.overlay.savedText != widget.overlay.originalText;
+      final bool showWhiteout = widget.isInlineEditing || hasSavedEdit;
+
+      // Ensure color is dark and readable on white background
+      Color effectiveColor = widget.overlay.color;
+      if (effectiveColor.alpha < 40 ||
+          (effectiveColor.red > 240 && effectiveColor.green > 240 && effectiveColor.blue > 240)) {
+        effectiveColor = const Color(0xFF1E293B);
+      }
 
       final textStyle = TextStyle(
-        color: widget.overlay.color,
+        color: effectiveColor,
         fontSize: widget.overlay.fontSize,
         fontWeight: widget.overlay.isBold ? FontWeight.bold : FontWeight.w500,
         fontStyle: widget.overlay.isItalic ? FontStyle.italic : FontStyle.normal,
@@ -3186,15 +3304,16 @@ class _MovableOverlayWidgetState extends State<_MovableOverlayWidget> {
             ? TextDecoration.underline
             : TextDecoration.none,
         fontFamily: widget.overlay.fontFamily,
+        height: 1.15,
       );
 
-      // In-place inline TextField directly over the PDF text when selected
-      if (widget.isSelected && widget.isEditMode) {
+      // In-place inline TextField directly over the PDF text when in active editing mode
+      if (widget.isSelected && widget.isInlineEditing) {
         return Container(
           width: _size.width,
-          padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 1),
+          padding: const EdgeInsets.symmetric(horizontal: 1.0, vertical: 0.5),
           decoration: BoxDecoration(
-            color: widget.overlay.backgroundColor ?? Colors.white,
+            color: Colors.white,
             borderRadius: BorderRadius.circular(2),
           ),
           child: TextField(
@@ -3206,7 +3325,7 @@ class _MovableOverlayWidgetState extends State<_MovableOverlayWidget> {
             textAlign: widget.overlay.textAlign,
             maxLines: null,
             cursorColor: const Color(0xFFEF4444),
-            cursorWidth: 2.2,
+            cursorWidth: 2.0,
             decoration: const InputDecoration(
               isDense: true,
               contentPadding: EdgeInsets.zero,
@@ -3216,35 +3335,56 @@ class _MovableOverlayWidgetState extends State<_MovableOverlayWidget> {
               errorBorder: InputBorder.none,
               disabledBorder: InputBorder.none,
             ),
+            onSubmitted: (_) {
+              widget.onSaveEditing(_textCtrl.text);
+            },
             onChanged: (newText) {
-              widget.overlay.text = newText;
+              // Local sizing update without rebuilding the entire document on every keystroke
               final tp = TextPainter(
                 text: TextSpan(text: newText, style: textStyle),
                 textDirection: TextDirection.ltr,
               )..layout();
-              final neededWidth = math.max(_size.width, tp.width + 12.0);
-              if (neededWidth > _size.width) {
+              final neededWidth = math.max(_size.width, tp.width + 6.0);
+              final neededHeight = math.max(_size.height, tp.height + 2.0);
+              if (neededWidth > _size.width || neededHeight > _size.height) {
                 setState(() {
-                  _size = Size(neededWidth, _size.height);
+                  _size = Size(
+                    math.max(_size.width, neededWidth),
+                    math.max(_size.height, neededHeight),
+                  );
                 });
                 widget.onUpdateSize(_size);
               }
-              Get.find<PdfEditorController>().overlays.refresh();
             },
           ),
         );
       }
 
+      // If user has saved an edit: display the edited text over a whiteout background
+      if (hasSavedEdit) {
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 1.0, vertical: 0.5),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(2),
+          ),
+          child: Text(
+            widget.overlay.text ?? widget.overlay.savedText ?? '',
+            textAlign: widget.overlay.textAlign,
+            style: textStyle,
+          ),
+        );
+      }
+
+      // If NOT edited yet (only selected): keep background transparent so the original
+      // high-resolution PDF text remains 100% visible, unshifted and pristine
       return Container(
-        padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 1),
-        decoration: BoxDecoration(
-          color: widget.overlay.backgroundColor ?? Colors.transparent,
-          borderRadius: isWhiteout ? BorderRadius.circular(2) : null,
-        ),
+        padding: const EdgeInsets.symmetric(horizontal: 1.0, vertical: 0.5),
+        color: Colors.transparent,
         child: Text(
           widget.overlay.text ?? '',
           textAlign: widget.overlay.textAlign,
-          style: textStyle,
+          style: textStyle.copyWith(color: Colors.transparent),
         ),
       );
     } else if (widget.overlay.type == OverlayType.image &&

@@ -110,6 +110,7 @@ class PdfOverlay {
   // Vector replacement & original text tracking
   PdfDetectedTextElement? originalDetectedElement;
   String? originalText;
+  String? savedText; // Phase 3: committed in-memory edited text
   double? originalPdfX;
   double? originalPdfY;
   double? originalPdfW;
@@ -125,6 +126,7 @@ class PdfOverlay {
     required this.position,
     this.size = const Size(180, 50),
     this.text,
+    this.savedText,
     this.color = Colors.black,
     this.backgroundColor = Colors.transparent,
     this.fontSize = 15,
@@ -145,7 +147,9 @@ class PdfOverlay {
     this.originalLayoutPageWidth,
     this.originalLayoutPageHeight,
     this.coverOriginal = true,
-  });
+  }) {
+    savedText ??= text;
+  }
 
   PdfOverlay copyWith({
     String? id,
@@ -154,6 +158,7 @@ class PdfOverlay {
     Offset? position,
     Size? size,
     String? text,
+    String? savedText,
     Color? color,
     Color? backgroundColor,
     double? fontSize,
@@ -182,6 +187,7 @@ class PdfOverlay {
       position: position ?? this.position,
       size: size ?? this.size,
       text: text ?? this.text,
+      savedText: savedText ?? this.savedText,
       color: color ?? this.color,
       backgroundColor: backgroundColor ?? this.backgroundColor,
       fontSize: fontSize ?? this.fontSize,
@@ -449,6 +455,8 @@ class PdfEditorController extends GetxController {
   final selectedOverlayId = Rx<String?>(null);
   /// Exact text item selected in Phase 2
   final selectedTextElement = Rx<PdfDetectedTextElement?>(null);
+  /// Active inline editing overlay ID in Phase 3
+  final activeEditingOverlayId = Rx<String?>(null);
   final isNightMode = false.obs;
 
   // ── Undo / Redo History ───────────────────────────────────────────────────
@@ -533,7 +541,16 @@ class PdfEditorController extends GetxController {
               final ph = (raw['pageHeight'] as num).toDouble();
               final fontSize = (raw['fontSize'] as num?)?.toDouble() ?? 14.0;
               final fontName = (raw['fontName'] as String?) ?? 'Helvetica';
-              final colorInt = (raw['color'] as num?)?.toInt() ?? 0xFF000000;
+              final rawColorInt = (raw['color'] as num?)?.toInt();
+              Color parsedColor = const Color(0xFF1E293B);
+              if (rawColorInt != null) {
+                final unsigned = rawColorInt & 0xFFFFFFFF;
+                final withAlpha = (unsigned & 0xFF000000) == 0 ? (0xFF000000 | unsigned) : unsigned;
+                final c = Color(withAlpha);
+                if (c.alpha > 40 && !(c.red > 240 && c.green > 240 && c.blue > 240)) {
+                  parsedColor = c;
+                }
+              }
               final baseline = (raw['baseline'] as num?)?.toDouble() ?? (y + h);
               final isBold = raw['isBold'] as bool? ?? false;
               final isItalic = raw['isItalic'] as bool? ?? false;
@@ -547,7 +564,7 @@ class PdfEditorController extends GetxController {
                 sourceHeight: ph,
                 fontSize: fontSize,
                 fontName: fontName,
-                textColor: Color(colorInt),
+                textColor: parsedColor,
                 baseline: baseline,
                 isBold: isBold,
                 isItalic: isItalic,
@@ -708,9 +725,65 @@ class PdfEditorController extends GetxController {
 
   /// Selects a specific detected text item (Phase 2 red bounding box selection)
   void selectTextElement(PdfDetectedTextElement? element) {
+    if (activeEditingOverlayId.value != null &&
+        (element == null || activeEditingOverlayId.value != element.id)) {
+      cancelActiveInlineEditing();
+    }
     selectedTextElement.value = element;
     if (element == null) {
       selectedOverlayId.value = null;
+    }
+  }
+
+  // ── Phase 3: Inline Text Editing State Management ───────────────────────────
+  bool isOverlayEditing(String id) => activeEditingOverlayId.value == id;
+
+  /// Starts inline text editing mode for the given overlay
+  void startInlineEditing(String overlayId) {
+    activeEditingOverlayId.value = overlayId;
+    selectedOverlayId.value = overlayId;
+  }
+
+  /// Saves the user's draft text to the in-memory editing state
+  void saveInlineEditing(String overlayId, String newText) {
+    final idx = overlays.indexWhere((o) => o.id == overlayId);
+    if (idx >= 0) {
+      recordHistory();
+      final current = overlays[idx];
+      current.savedText = newText;
+      current.text = newText;
+      current.backgroundColor = Colors.white; // Covers original text seamlessly
+      overlays.refresh();
+      log('[PdfEditor] SAVED INLINE EDIT: id=$overlayId, text="$newText"');
+    }
+    if (activeEditingOverlayId.value == overlayId) {
+      activeEditingOverlayId.value = null;
+    }
+  }
+
+  /// Cancels unsaved changes and restores the previously saved (or original) text
+  void cancelInlineEditing(String overlayId) {
+    final idx = overlays.indexWhere((o) => o.id == overlayId);
+    if (idx >= 0) {
+      final current = overlays[idx];
+      final restored = current.savedText ?? current.originalText ?? '';
+      current.text = restored;
+      if (current.savedText == current.originalText) {
+        current.backgroundColor = Colors.transparent;
+      }
+      overlays.refresh();
+      log('[PdfEditor] CANCELLED INLINE EDIT: id=$overlayId, restored="$restored"');
+    }
+    if (activeEditingOverlayId.value == overlayId) {
+      activeEditingOverlayId.value = null;
+    }
+  }
+
+  /// Cancels any currently active inline editing session without saving
+  void cancelActiveInlineEditing() {
+    final activeId = activeEditingOverlayId.value;
+    if (activeId != null) {
+      cancelInlineEditing(activeId);
     }
   }
 
@@ -747,7 +820,7 @@ class PdfEditorController extends GetxController {
     final scale = detectedElement.sourceWidth > 0
         ? pageSize.width / detectedElement.sourceWidth
         : 1.0;
-    final displayFontSize = (detectedElement.fontSize * scale).clamp(8.0, 72.0);
+    final displayFontSize = (detectedElement.fontSize * scale).clamp(5.0, 72.0);
 
     final overlay = PdfOverlay(
       id: detectedElement.id,
@@ -755,12 +828,13 @@ class PdfEditorController extends GetxController {
       type: OverlayType.text,
       position: Offset(scaledRect.left - 1.0, scaledRect.top - 1.0),
       size: Size(
-        math.max(32.0, scaledRect.width + 4.0),
-        math.max(18.0, scaledRect.height + 4.0),
+        scaledRect.width + 2.0,
+        math.max(scaledRect.height + 2.0, displayFontSize * 1.15),
       ),
       text: detectedElement.text,
+      savedText: detectedElement.text,
       color: detectedElement.textColor,
-      backgroundColor: Colors.white, // Covers original text seamlessly
+      backgroundColor: Colors.transparent, // Stays transparent until user actually edits
       fontSize: displayFontSize,
       isBold: detectedElement.isBold,
       isItalic: detectedElement.isItalic,
@@ -966,6 +1040,9 @@ class PdfEditorController extends GetxController {
   }
 
   void selectOverlay(String? id) {
+    if (activeEditingOverlayId.value != null && activeEditingOverlayId.value != id) {
+      cancelActiveInlineEditing();
+    }
     selectedOverlayId.value = id;
     if (id != null) {
       selectedTextElement.value = null;
