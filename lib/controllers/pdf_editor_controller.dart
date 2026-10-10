@@ -797,6 +797,19 @@ class PdfEditorController extends GetxController {
     }
   }
 
+  /// Commits any currently active inline editing session and saves changes
+  void commitActiveInlineEditing() {
+    final activeId = activeEditingOverlayId.value;
+    if (activeId != null) {
+      final idx = overlays.indexWhere((o) => o.id == activeId);
+      if (idx >= 0) {
+        final current = overlays[idx];
+        saveInlineEditing(activeId, current.text ?? current.savedText ?? '');
+      }
+      activeEditingOverlayId.value = null;
+    }
+  }
+
   /// Cancels any currently active inline editing session without saving
   void cancelActiveInlineEditing() {
     final activeId = activeEditingOverlayId.value;

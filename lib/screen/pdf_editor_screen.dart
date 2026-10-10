@@ -2599,6 +2599,7 @@ class _InteractivePageOverlayLayerState
 
     if (match != null) {
       print('[PDF-HIT] Matched text: "${match.text}" at ${match.boundingBox}');
+      widget.controller.commitActiveInlineEditing();
       widget.onTapDetectedText?.call(widget.pageIndex, match, pageSize);
       if (widget.controller.editorMode.value != EditorMode.edit) {
         widget.controller.setEditorMode(EditorMode.edit);
@@ -2606,12 +2607,12 @@ class _InteractivePageOverlayLayerState
       return;
     }
 
-    // Tapping empty space clears active text selection & overlay selection
+    // Tapping empty space clears active text selection & overlay selection while preserving typed edits
     if (widget.controller.selectedTextElement.value != null ||
         widget.controller.selectedOverlayId.value != null ||
         widget.controller.activeEditingOverlayId.value != null) {
-      print('[PDF-HIT] Tapped empty space -> clearing selection');
-      widget.controller.cancelActiveInlineEditing();
+      print('[PDF-HIT] Tapped empty space -> committing edit and clearing selection');
+      widget.controller.commitActiveInlineEditing();
       widget.controller.selectTextElement(null);
       widget.controller.selectOverlay(null);
       return;
@@ -2837,12 +2838,18 @@ class _MovableOverlayWidgetState extends State<_MovableOverlayWidget> {
         if (mounted) _focusNode.requestFocus();
       });
     } else if (oldWidget.isInlineEditing && !widget.isInlineEditing) {
+      widget.overlay.text = _textCtrl.text;
+      widget.overlay.savedText = _textCtrl.text;
       _focusNode.unfocus();
     }
   }
 
   @override
   void dispose() {
+    if (widget.isInlineEditing) {
+      widget.overlay.text = _textCtrl.text;
+      widget.overlay.savedText = _textCtrl.text;
+    }
     _textCtrl.dispose();
     _focusNode.dispose();
     super.dispose();
@@ -3263,9 +3270,9 @@ class _MovableOverlayWidgetState extends State<_MovableOverlayWidget> {
 
   Widget _buildContent() {
     if (widget.overlay.type == OverlayType.text) {
-      final bool hasSavedEdit = widget.overlay.savedText != null &&
-          widget.overlay.originalText != null &&
-          widget.overlay.savedText != widget.overlay.originalText;
+      final currentText = widget.overlay.savedText ?? widget.overlay.text ?? '';
+      final bool hasSavedEdit = currentText.isNotEmpty &&
+          (widget.overlay.originalText == null || currentText != widget.overlay.originalText);
 
       // Ensure color is dark and readable on white background
       Color effectiveColor = widget.overlay.color;
@@ -3318,6 +3325,11 @@ class _MovableOverlayWidgetState extends State<_MovableOverlayWidget> {
               widget.onSaveEditing(_textCtrl.text);
             },
             onChanged: (newText) {
+              // Immediately sync model so user's typed edit is never lost when moving away
+              widget.overlay.text = newText;
+              widget.overlay.savedText = newText;
+              widget.overlay.backgroundColor = Colors.white;
+
               // Local sizing update without rebuilding the entire document on every keystroke
               final tp = TextPainter(
                 text: TextSpan(text: newText, style: textStyle),
@@ -3348,7 +3360,7 @@ class _MovableOverlayWidgetState extends State<_MovableOverlayWidget> {
             borderRadius: BorderRadius.circular(2),
           ),
           child: Text(
-            widget.overlay.text ?? widget.overlay.savedText ?? '',
+            currentText,
             textAlign: widget.overlay.textAlign,
             style: textStyle,
           ),

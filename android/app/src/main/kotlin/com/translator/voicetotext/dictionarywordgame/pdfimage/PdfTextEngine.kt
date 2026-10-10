@@ -276,6 +276,8 @@ class PdfTextEngine(private val context: Context) {
         val origTopY: Float,
         val origW: Float,
         val origH: Float,
+        val w: Float = origW,
+        val h: Float = origH,
         val origPdfBottomY: Float,
         val origPdfTopY: Float,
         val targetBaseline: Float,
@@ -284,6 +286,9 @@ class PdfTextEngine(private val context: Context) {
         val color: Long,
         val isBold: Boolean,
         val isItalic: Boolean,
+        val bgR: Float = 1f,
+        val bgG: Float = 1f,
+        val bgB: Float = 1f,
         var replacedCount: Int = 0
     )
 
@@ -305,7 +310,8 @@ class PdfTextEngine(private val context: Context) {
                 if (pageIndex < 0 || pageIndex >= document.numberOfPages) continue
                 val page = document.getPage(pageIndex)
                 val cropBox: PDRectangle = page.cropBox ?: page.mediaBox ?: PDRectangle(0f, 0f, 595f, 842f)
-                val pageHeight = cropBox.height
+                val pageRotation = page.rotation
+                val pageHeight = if (pageRotation == 90 || pageRotation == 270) cropBox.width else cropBox.height
 
                 // Convert modifications into TargetTextMod
                 val targetMods = pageMods.mapIndexed { idx, mod ->
@@ -327,6 +333,16 @@ class PdfTextEngine(private val context: Context) {
                     val baseline = ((mod["baseline"] as? Number)?.toFloat() ?: (origTopY + origH * 0.8f))
                     val targetBaseline = pageHeight - baseline
 
+                    val bgVal = (mod["backgroundColor"] as? Number)?.toLong()
+                    val (bgR, bgG, bgB) = if (bgVal != null && bgVal != 0L && bgVal != 0x00FFFFFFL) {
+                        val r = ((bgVal shr 16) and 0xFF) / 255f
+                        val g = ((bgVal shr 8) and 0xFF) / 255f
+                        val b = (bgVal and 0xFF) / 255f
+                        Triple(r, g, b)
+                    } else {
+                        Triple(1f, 1f, 1f)
+                    }
+
                     TargetTextMod(
                         id = "mod_$idx",
                         originalText = originalText,
@@ -335,6 +351,8 @@ class PdfTextEngine(private val context: Context) {
                         origTopY = origTopY,
                         origW = origW,
                         origH = origH,
+                        w = w,
+                        h = h,
                         origPdfBottomY = pageHeight - origTopY - origH,
                         origPdfTopY = pageHeight - origTopY,
                         targetBaseline = targetBaseline,
@@ -342,7 +360,10 @@ class PdfTextEngine(private val context: Context) {
                         fontName = fontName,
                         color = colorVal,
                         isBold = isBold,
-                        isItalic = isItalic
+                        isItalic = isItalic,
+                        bgR = bgR,
+                        bgG = bgG,
+                        bgB = bgB
                     )
                 }
 
@@ -350,44 +371,111 @@ class PdfTextEngine(private val context: Context) {
                 val parser = PDFStreamParser(page)
                 parser.parse()
                 val rawTokens = parser.tokens
-                val tokens = ArrayList<Any>(rawTokens.size + (targetMods.size * 20))
+                val tokens = ArrayList<Any>(rawTokens.size + (targetMods.size * 30))
                 tokens.addAll(rawTokens)
 
-                var currentTx = 0f
-                var currentTy = 0f
+                // Track transformation matrix (CTM) and text matrices
+                val ctmStack = ArrayDeque<FloatArray>()
+                var ctm = floatArrayOf(1f, 0f, 0f, 1f, 0f, 0f)
+                var textMatrix = floatArrayOf(1f, 0f, 0f, 1f, 0f, 0f)
+                var textLineMatrix = floatArrayOf(1f, 0f, 0f, 1f, 0f, 0f)
+                var currentLeading = 12f
 
-                // 2. Walk tokens, track text position, and NEUTRALIZE original text operators
+                fun multMatrix(m1: FloatArray, m2: FloatArray): FloatArray {
+                    return floatArrayOf(
+                        m1[0] * m2[0] + m1[1] * m2[2],
+                        m1[0] * m2[1] + m1[1] * m2[3],
+                        m1[2] * m2[0] + m1[3] * m2[2],
+                        m1[2] * m2[1] + m1[3] * m2[3],
+                        m1[4] * m2[0] + m1[5] * m2[2] + m2[4],
+                        m1[4] * m2[1] + m1[5] * m2[3] + m2[5]
+                    )
+                }
+
+                fun getCurrentPagePos(): Pair<Float, Float> {
+                    val tx = textMatrix[4]
+                    val ty = textMatrix[5]
+                    val px = tx * ctm[0] + ty * ctm[2] + ctm[4]
+                    val py = tx * ctm[1] + ty * ctm[3] + ctm[5]
+                    return Pair(px, py)
+                }
+
+                // 2. Walk tokens, track exact page coordinates, and NEUTRALIZE original text operators
                 for (i in 0 until tokens.size) {
                     val token = tokens[i]
                     if (token is Operator) {
                         val opName = token.name
                         when (opName) {
-                            "BT" -> {
-                                currentTx = 0f
-                                currentTy = 0f
+                            "q" -> {
+                                ctmStack.addLast(ctm.copyOf())
                             }
-                            "Tm" -> {
-                                if (i >= 2) {
-                                    val e = (tokens[i - 2] as? COSNumber)?.floatValue() ?: 0f
-                                    val f = (tokens[i - 1] as? COSNumber)?.floatValue() ?: 0f
-                                    currentTx = e
-                                    currentTy = f
+                            "Q" -> {
+                                if (ctmStack.isNotEmpty()) {
+                                    ctm = ctmStack.removeLast()
                                 }
                             }
-                            "Td", "TD" -> {
+                            "cm" -> {
+                                if (i >= 6) {
+                                    val a = (tokens[i - 6] as? COSNumber)?.floatValue() ?: 1f
+                                    val b = (tokens[i - 5] as? COSNumber)?.floatValue() ?: 0f
+                                    val c = (tokens[i - 4] as? COSNumber)?.floatValue() ?: 0f
+                                    val d = (tokens[i - 3] as? COSNumber)?.floatValue() ?: 1f
+                                    val e = (tokens[i - 2] as? COSNumber)?.floatValue() ?: 0f
+                                    val f = (tokens[i - 1] as? COSNumber)?.floatValue() ?: 0f
+                                    ctm = multMatrix(ctm, floatArrayOf(a, b, c, d, e, f))
+                                }
+                            }
+                            "BT" -> {
+                                textMatrix = floatArrayOf(1f, 0f, 0f, 1f, 0f, 0f)
+                                textLineMatrix = floatArrayOf(1f, 0f, 0f, 1f, 0f, 0f)
+                            }
+                            "TL" -> {
+                                if (i >= 1) {
+                                    currentLeading = (tokens[i - 1] as? COSNumber)?.floatValue() ?: currentLeading
+                                }
+                            }
+                            "Tm" -> {
+                                if (i >= 6) {
+                                    val a = (tokens[i - 6] as? COSNumber)?.floatValue() ?: 1f
+                                    val b = (tokens[i - 5] as? COSNumber)?.floatValue() ?: 0f
+                                    val c = (tokens[i - 4] as? COSNumber)?.floatValue() ?: 0f
+                                    val d = (tokens[i - 3] as? COSNumber)?.floatValue() ?: 1f
+                                    val e = (tokens[i - 2] as? COSNumber)?.floatValue() ?: 0f
+                                    val f = (tokens[i - 1] as? COSNumber)?.floatValue() ?: 0f
+                                    textMatrix = floatArrayOf(a, b, c, d, e, f)
+                                    textLineMatrix = textMatrix.copyOf()
+                                }
+                            }
+                            "Td" -> {
                                 if (i >= 2) {
                                     val dx = (tokens[i - 2] as? COSNumber)?.floatValue() ?: 0f
                                     val dy = (tokens[i - 1] as? COSNumber)?.floatValue() ?: 0f
-                                    currentTx += dx
-                                    currentTy += dy
+                                    textLineMatrix[4] += dx * textLineMatrix[0] + dy * textLineMatrix[2]
+                                    textLineMatrix[5] += dx * textLineMatrix[1] + dy * textLineMatrix[3]
+                                    textMatrix = textLineMatrix.copyOf()
                                 }
                             }
-                            "Tj", "'" -> {
+                            "TD" -> {
+                                if (i >= 2) {
+                                    val dx = (tokens[i - 2] as? COSNumber)?.floatValue() ?: 0f
+                                    val dy = (tokens[i - 1] as? COSNumber)?.floatValue() ?: 0f
+                                    currentLeading = -dy
+                                    textLineMatrix[4] += dx * textLineMatrix[0] + dy * textLineMatrix[2]
+                                    textLineMatrix[5] += dx * textLineMatrix[1] + dy * textLineMatrix[3]
+                                    textMatrix = textLineMatrix.copyOf()
+                                }
+                            }
+                            "T*" -> {
+                                textLineMatrix[5] -= currentLeading
+                                textMatrix = textLineMatrix.copyOf()
+                            }
+                            "Tj" -> {
+                                val (px, py) = getCurrentPagePos()
                                 if (i >= 1) {
                                     val operand = tokens[i - 1]
                                     if (operand is COSString) {
                                         val str = operand.string ?: ""
-                                        val matched = findMatchingTarget(str, currentTx, currentTy, targetMods)
+                                        val matched = findMatchingTarget(str, px, py, targetMods)
                                         if (matched != null) {
                                             tokens[i - 1] = COSString("")
                                             matched.replacedCount++
@@ -396,11 +484,12 @@ class PdfTextEngine(private val context: Context) {
                                 }
                             }
                             "TJ" -> {
+                                val (px, py) = getCurrentPagePos()
                                 if (i >= 1) {
                                     val operand = tokens[i - 1]
                                     if (operand is COSArray) {
                                         val str = operand.filterIsInstance<COSString>().joinToString("") { it.string ?: "" }
-                                        val matched = findMatchingTarget(str, currentTx, currentTy, targetMods)
+                                        val matched = findMatchingTarget(str, px, py, targetMods)
                                         if (matched != null) {
                                             tokens[i - 1] = COSArray()
                                             matched.replacedCount++
@@ -408,12 +497,31 @@ class PdfTextEngine(private val context: Context) {
                                     }
                                 }
                             }
-                            "\"" -> {
+                            "'" -> {
+                                textLineMatrix[5] -= currentLeading
+                                textMatrix = textLineMatrix.copyOf()
+                                val (px, py) = getCurrentPagePos()
                                 if (i >= 1) {
                                     val operand = tokens[i - 1]
                                     if (operand is COSString) {
                                         val str = operand.string ?: ""
-                                        val matched = findMatchingTarget(str, currentTx, currentTy, targetMods)
+                                        val matched = findMatchingTarget(str, px, py, targetMods)
+                                        if (matched != null) {
+                                            tokens[i - 1] = COSString("")
+                                            matched.replacedCount++
+                                        }
+                                    }
+                                }
+                            }
+                            "\"" -> {
+                                textLineMatrix[5] -= currentLeading
+                                textMatrix = textLineMatrix.copyOf()
+                                val (px, py) = getCurrentPagePos()
+                                if (i >= 1) {
+                                    val operand = tokens[i - 1]
+                                    if (operand is COSString) {
+                                        val str = operand.string ?: ""
+                                        val matched = findMatchingTarget(str, px, py, targetMods)
                                         if (matched != null) {
                                             tokens[i - 1] = COSString("")
                                             matched.replacedCount++
@@ -432,10 +540,38 @@ class PdfTextEngine(private val context: Context) {
                     page.resources = resources
                 }
 
-                // 4. Inject clean vector replacement text directly into the page content stream
+                // 4. Inject clean vector clearing rectangle & replacement text directly into content stream
                 for (t in targetMods) {
+                    if (t.newText.isEmpty() && t.originalText.isEmpty()) continue
+
+                    // 4a. Vector Background Clearing Rectangle
+                    // Permanently wipes out the original line in native vector space so that
+                    // zero residual glyphs, bullet points, or overlapping characters can show through.
+                    tokens.add(Operator.getOperator("q"))
+                    tokens.add(COSFloat(t.bgR))
+                    tokens.add(COSFloat(t.bgG))
+                    tokens.add(COSFloat(t.bgB))
+                    tokens.add(Operator.getOperator("rg"))
+
+                    val padX = 1.5f
+                    val padY = 1.5f
+                    val descenderPad = (t.fontSize * 0.25f).coerceAtLeast(2f)
+                    val clearX = t.origX - padX
+                    val clearY = t.origPdfBottomY - padY - descenderPad
+                    val clearW = max(t.origW, t.w) + (padX * 2f)
+                    val clearH = t.origH + (padY * 2f) + (descenderPad * 1.5f)
+
+                    tokens.add(COSFloat(clearX))
+                    tokens.add(COSFloat(clearY))
+                    tokens.add(COSFloat(clearW))
+                    tokens.add(COSFloat(clearH))
+                    tokens.add(Operator.getOperator("re"))
+                    tokens.add(Operator.getOperator("f"))
+                    tokens.add(Operator.getOperator("Q"))
+
                     if (t.newText.isEmpty()) continue
 
+                    // 4b. Draw crisp native replacement text
                     val font = when {
                         t.fontName.contains("Times", ignoreCase = true) -> when {
                             t.isBold && t.isItalic -> PDType1Font.TIMES_BOLD_ITALIC
@@ -524,28 +660,32 @@ class PdfTextEngine(private val context: Context) {
         targetMods: List<TargetTextMod>
     ): TargetTextMod? {
         val cleanToken = tokenStr.trim()
-        if (cleanToken.isEmpty()) return null
 
         for (t in targetMods) {
             val cleanOrig = t.originalText.trim()
-            val textMatch = cleanOrig.isNotEmpty() &&
-                    (cleanToken == cleanOrig ||
-                     cleanOrig.contains(cleanToken) ||
-                     cleanToken.contains(cleanOrig))
+            val textMatch = cleanOrig.isNotEmpty() && cleanToken.isNotEmpty() &&
+                    (cleanToken.equals(cleanOrig, ignoreCase = true) ||
+                     cleanOrig.contains(cleanToken, ignoreCase = true) ||
+                     cleanToken.contains(cleanOrig, ignoreCase = true))
 
-            val xWithin = (tx >= (t.origX - 12f)) && (tx <= (t.origX + t.origW + 12f))
-            val yWithin = (ty >= (t.origPdfBottomY - 12f)) && (ty <= (t.origPdfTopY + 12f))
+            val xWithin = (tx >= (t.origX - 25f)) && (tx <= (t.origX + t.origW + 25f))
+            val yWithin = (ty >= (t.origPdfBottomY - 18f)) && (ty <= (t.origPdfTopY + 18f))
             val posMatch = xWithin && yWithin
 
-            if (textMatch && posMatch) {
+            // 1. Text matches and vertical or full position is consistent -> MATCH
+            if (textMatch && (posMatch || ty == 0f || yWithin)) {
                 return t
-            } else if (textMatch && (ty == 0f || yWithin)) {
+            }
+
+            // 2. Positional hit-test: if coordinates locate this operator within the line box -> MATCH
+            // Handles CID fonts, subset TrueType fonts, and raw byte glyph IDs seamlessly
+            if (posMatch) {
                 return t
-            } else if (posMatch && cleanOrig.isNotEmpty()) {
-                val commonPrefix = cleanToken.take(3)
-                if (cleanOrig.contains(commonPrefix, ignoreCase = true)) {
-                    return t
-                }
+            }
+
+            // 3. Fallback: if substring has 4+ characters and vertical line matches
+            if (cleanToken.length >= 4 && cleanOrig.contains(cleanToken, ignoreCase = true) && yWithin) {
+                return t
             }
         }
         return null
@@ -565,6 +705,8 @@ class PdfTextEngine(private val context: Context) {
             } else if (c == '“' || c == '”') {
                 sb.append('"')
             } else if (c == '–' || c == '—') {
+                sb.append('-')
+            } else if (c == '•' || c == '·' || c == '●' || c == '○' || c == '▪') {
                 sb.append('-')
             } else {
                 sb.append(' ')
